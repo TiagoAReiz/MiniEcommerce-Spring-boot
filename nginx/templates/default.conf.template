@@ -10,7 +10,7 @@
 
 # A rate is stored as an interval, not as a quota: 10r/m means one request every 6 seconds,
 # so two clicks in a row already trip it. That is what burst is for.
-limit_req_zone $binary_remote_addr zone=auth:10m rate=10r/m;
+limit_req_zone $binary_remote_addr zone=auth:10m rate=60r/m;
 limit_req_zone $binary_remote_addr zone=api:10m  rate=20r/s;
 limit_conn_zone $binary_remote_addr zone=conns:10m;
 
@@ -40,9 +40,21 @@ server {
 
     limit_conn conns 20;
 
+    # nginx answers 429 with an HTML page by default. The API promises problem+json
+    # everywhere, and a front end doing response.json() would break on this one status.
+    error_page 429 = @limited;
+
+    location @limited {
+        default_type application/problem+json;
+        # limit_req sends no Retry-After, so a client has nothing to wait on and just
+        # hammers again
+        add_header Retry-After 60 always;
+        return 429 '{"status":429,"title":"Too Many Requests","detail":"Muitas requisições. Tente novamente em instantes.","code":"RATE_LIMITED"}';
+    }
+
     # Every call here fetches Google's keys, signs a token and writes a row.
     location /auth/ {
-        limit_req zone=auth burst=5 nodelay;
+        limit_req zone=auth burst=20 nodelay;
         proxy_pass http://${APP_UPSTREAM};
     }
 
