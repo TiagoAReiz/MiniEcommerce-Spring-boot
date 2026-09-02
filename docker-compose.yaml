@@ -5,15 +5,15 @@ services:
     restart: always
     shm_size: 128mb
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: test-flyway
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-postgres}
     ports:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d test-flyway"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-postgres}"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -61,7 +61,117 @@ services:
       timeout: 10s
       retries: 12
 
+  minio:
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    container_name: miniecommerce-minio
+    restart: always
+    command: ["server", "/data", "--console-address", ":9001"]
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    volumes:
+      - miniodata:/data
+    healthcheck:
+      test: ["CMD-SHELL", "mc ready local || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  app:
+    build: .
+    container_name: miniecommerce-app
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    environment:
+      # Service names, not localhost: inside the compose network localhost is the app's own
+      # container.
+      DB_HOST: db:5432
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      STORAGE_ENDPOINT: http://minio:9000
+
+      # The one address that must NOT use a service name: it is embedded in the photo URLs
+      # the API returns, and the customer's browser resolves it from outside this network.
+      STORAGE_PUBLIC_URL: ${STORAGE_PUBLIC_URL:-http://localhost:9000}
+
+      STORAGE_ACCESS_KEY: ${STORAGE_ACCESS_KEY:-minioadmin}
+      STORAGE_SECRET_KEY: ${STORAGE_SECRET_KEY:-minioadmin}
+      STORAGE_BUCKET: ${STORAGE_BUCKET:-product-photos}
+      STORAGE_REGION: ${STORAGE_REGION:-us-east-1}
+      STORAGE_PATH_STYLE_ACCESS: ${STORAGE_PATH_STYLE_ACCESS:-true}
+      STORAGE_MAX_FILE_SIZE: ${STORAGE_MAX_FILE_SIZE:-5242880}
+      STORAGE_MAX_REQUEST_SIZE: ${STORAGE_MAX_REQUEST_SIZE:-6291456}
+      STORAGE_ALLOWED_CONTENT_TYPES: ${STORAGE_ALLOWED_CONTENT_TYPES:-image/jpeg,image/png,image/webp}
+
+      # Secrets are interpolated from .env and never written here.
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_ISSUER: ${JWT_ISSUER:-miniecommerce}
+      JWT_TOKEN_TTL: ${JWT_TOKEN_TTL:-1h}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+      GOOGLE_ISSUER: ${GOOGLE_ISSUER:-https://accounts.google.com}
+
+      MP_BASE_URL: ${MP_BASE_URL:-https://api.mercadopago.com}
+      MP_ACCESS_TOKEN: ${MP_ACCESS_TOKEN}
+      MP_WEBHOOK_SECRET: ${MP_WEBHOOK_SECRET}
+      MP_NOTIFICATION_URL: ${MP_NOTIFICATION_URL}
+      MP_SUCCESS_URL: ${MP_SUCCESS_URL:-http://localhost:3000/orders}
+      MP_FAILURE_URL: ${MP_FAILURE_URL:-http://localhost:3000/orders}
+      MP_PENDING_URL: ${MP_PENDING_URL:-http://localhost:3000/orders}
+      MP_TIMEOUT: ${MP_TIMEOUT:-10s}
+      MP_NOTIFICATION_MEMORY: ${MP_NOTIFICATION_MEMORY:-24h}
+      MP_RECONCILIATION_INTERVAL: ${MP_RECONCILIATION_INTERVAL:-5m}
+      MP_RECONCILIATION_MIN_AGE: ${MP_RECONCILIATION_MIN_AGE:-5m}
+      MP_RECONCILIATION_MAX_AGE: ${MP_RECONCILIATION_MAX_AGE:-24h}
+      MP_RECONCILIATION_BATCH_SIZE: ${MP_RECONCILIATION_BATCH_SIZE:-50}
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:8080/actuator/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      # Flyway plus context startup takes a while on a cold JVM; without this the container
+      # would be reported unhealthy before it ever had a chance.
+      start_period: 60s
+
+  # Edge rate limiting. Opt-in through the "edge" profile, so a plain `docker compose up`
+  # keeps the application reachable directly on 8080 while you develop.
+  #
+  #   docker compose --profile edge up -d nginx
+  #
+  # APP_UPSTREAM decides what it proxies to: app:8080 for the containerised application, or
+  # host.docker.internal:8080 while it runs on the host through ./mvnw.
+  nginx:
+    image: nginx:1.29-alpine
+    container_name: miniecommerce-nginx
+    profiles: ["edge"]
+    restart: always
+    ports:
+      - "${NGINX_PORT:-8081}:80"
+    environment:
+      APP_UPSTREAM: ${APP_UPSTREAM:-host.docker.internal:8080}
+    volumes:
+      - ./nginx/templates:/etc/nginx/templates:ro
+    extra_hosts:
+      # lets the container reach an application running on the host
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost/actuator/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+
 volumes:
   pgdata:
   redisdata:
   kafkadata:
+  miniodata:

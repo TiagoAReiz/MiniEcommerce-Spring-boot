@@ -1,0 +1,63 @@
+# Edge rate limiting for MiniEcommerce.
+#
+# This layer only ever sees an IP address — it cannot read the JWT, so it cannot tell one
+# customer from another. It exists to drop volume before it costs a JVM thread, a database
+# connection and a Redis round trip. Per-account limits belong in the application.
+#
+# Rendered by the nginx image from this template, so ${APP_UPSTREAM} comes from the
+# environment: app:8080 for the containerised application, host.docker.internal:8080 when the
+# application runs on the host through ./mvnw.
+
+# A rate is stored as an interval, not as a quota: 10r/m means one request every 6 seconds,
+# so two clicks in a row already trip it. That is what burst is for.
+limit_req_zone $binary_remote_addr zone=auth:10m rate=10r/m;
+limit_req_zone $binary_remote_addr zone=api:10m  rate=20r/s;
+limit_conn_zone $binary_remote_addr zone=conns:10m;
+
+# The default is 503, which tells a client the service is broken rather than that it went
+# too fast — and a well behaved client backs off differently for each.
+limit_req_status 429;
+limit_conn_status 429;
+
+server {
+    listen 80;
+    server_name _;
+
+    # Behind ngrok or any proxy, $remote_addr is the proxy: without this every visitor shares
+    # one bucket and the limit becomes global by accident. Trusting any source is only safe
+    # while nothing but that proxy can reach this server — in production narrow it to the
+    # load balancer or CDN range, or a forged header walks past every limit here.
+    set_real_ip_from 0.0.0.0/0;
+    real_ip_header   X-Forwarded-For;
+    real_ip_recursive on;
+
+    client_max_body_size 6m;   # matches the multipart ceiling in the application
+
+    proxy_set_header Host              $host;
+    proxy_set_header X-Real-IP         $remote_addr;
+    proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+
+    limit_conn conns 20;
+
+    # Every call here fetches Google's keys, signs a token and writes a row.
+    location /auth/ {
+        limit_req zone=auth burst=5 nodelay;
+        proxy_pass http://${APP_UPSTREAM};
+    }
+
+    # Deliberately unlimited. Every request arrives from Mercado Pago's own addresses, so an
+    # IP limit throttles the provider rather than an attacker — and 429 is not 2xx, so they
+    # would redeliver into the same limit, forever.
+    location /webhooks/ {
+        proxy_pass http://${APP_UPSTREAM};
+    }
+
+    location / {
+        # nodelay serves the burst immediately and rejects only the excess. Without it the
+        # burst is queued and released at the configured rate, so the client gets slowness
+        # instead of an honest 429 — worse for an interactive front end.
+        limit_req zone=api burst=40 nodelay;
+        proxy_pass http://${APP_UPSTREAM};
+    }
+}

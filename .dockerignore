@@ -1,0 +1,34 @@
+# Secrets must never reach an image layer: anything copied in is recoverable from the
+# image later, even if a subsequent layer deletes it.
+.env
+.env.local
+*.pem
+*.key
+
+# Build output — the image builds its own, and a host target/ built on another JDK would
+# poison the layer cache.
+target/
+build/
+
+.git/
+.gitignore
+.gitattributes
+
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+.settings/
+.classpath
+.project
+
+docs/
+HELP.md
+README.md
+
+# Compose describes how to run the image; it is not needed to build one.
+docker-compose.yaml
+docker-compose.yml
+Dockerfile
+.dockerignore
