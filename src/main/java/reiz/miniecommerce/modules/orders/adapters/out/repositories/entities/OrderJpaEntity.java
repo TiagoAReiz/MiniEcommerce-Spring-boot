@@ -64,6 +64,9 @@ public class OrderJpaEntity {
     @Column(name = "status", nullable = false, length = 30)
     private OrderStatus status;
 
+    @Column(name = "expires_at")
+    private OffsetDateTime expiresAt;
+
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;

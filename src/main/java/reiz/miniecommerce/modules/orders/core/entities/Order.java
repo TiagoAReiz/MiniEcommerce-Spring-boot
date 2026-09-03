@@ -29,6 +29,15 @@ public class Order {
     private UUID shipmentId;
     private OrderStatus status;
 
+    /**
+     * When the stock reservation of an unpaid order runs out.
+     *
+     * <p>Cleared once the order is paid. A CANCELLED order that still carries one was
+     * abandoned rather than cancelled by hand — which is what makes this column a record of
+     * lost sales and not just a timer.
+     */
+    private OffsetDateTime expiresAt;
+
     private OffsetDateTime createdAt;
     private OffsetDateTime updatedAt;
 }

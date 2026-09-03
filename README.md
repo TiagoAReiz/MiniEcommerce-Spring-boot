@@ -4,7 +4,7 @@ Loja online de dono único: catálogo, carrinho, checkout, pagamento pelo Mercad
 e avaliação. Spring Boot 4 sobre Postgres, Redis e um bucket S3, em arquitetura hexagonal
 com um módulo por agregado.
 
-**114 testes de integração** rodando contra Postgres, Redis e MinIO reais — sem mock de
+**120 testes de integração** rodando contra Postgres, Redis e MinIO reais — sem mock de
 infraestrutura.
 
 ---
@@ -208,6 +208,7 @@ token. Por isso as rotas são `/users/me/...`.
 | `V1__init` | 10 tabelas, FKs, índices e índices únicos parciais |
 | `V2__owner_seed_product_active_order_status` | `products.active`, `owners.google_sub` nullable, owner semeado, check de status |
 | `V3__order_address` | `orders.address_id` |
+| `V4__order_expiration` | `orders.expires_at` + índice parcial da varredura |
 
 Três índices únicos parciais carregam regra de negócio que o código não precisa repetir:
 
@@ -228,6 +229,20 @@ PENDING ──▶ PAID ──▶ SHIPPED ──▶ DELIVERED
 
 `CANCELLED` devolve o estoque e reativa o produto que tinha esgotado.
 
+### Reserva de estoque com prazo
+
+O checkout baixa o estoque antes de existir cobrança — necessário, senão dois clientes compram
+a mesma última unidade. O preço disso é que um pedido abandonado segura a prateleira, e a
+reconciliação de pagamento não ajuda: ela só enxerga cobranças que chegaram a ser abertas.
+
+`orders.expires_at` é gravado no checkout (30 min), esticado ao abrir a cobrança (24 h, o
+mesmo alcance da reconciliação — cancelar antes devolveria ao estoque um pedido prestes a ser
+aprovado) e apagado quando o pedido sai de `PENDING`.
+
+A varredura que vence a reserva **mantém** a data. É isso que separa um pedido abandonado de
+um cancelado à mão, e o que faz a coluna virar histórico de venda perdida: junto com os
+`order_items`, fica registrado o que o cliente ia levar e por quanto.
+
 ---
 
 ## Testes
@@ -237,7 +252,7 @@ PENDING ──▶ PAID ──▶ SHIPPED ──▶ DELIVERED
 ./mvnw test -Dtest=CheckoutTest
 ```
 
-114 testes contra infraestrutura real. Sem mock de repositório: os bugs que apareceram nesta
+120 testes contra infraestrutura real. Sem mock de repositório: os bugs que apareceram nesta
 base — `@Cacheable` estourando com `Optional.empty()`, carrinho sobrevivendo a rollback,
 índice único de capa, venda dupla sob concorrência — nenhum apareceria com repositório
 mockado.

@@ -9,6 +9,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Component;
 
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -51,6 +52,13 @@ public class OrderRepositoryAdapter implements OrderRepository {
     @Override
     public Optional<Order> findByShipmentId(UUID shipmentId) {
         return jpaRepository.findByShipmentId(shipmentId).map(mapper::toDomain);
+    }
+
+    @Override
+    public List<Order> findExpired(OffsetDateTime now) {
+        return jpaRepository
+                .findByStatusAndExpiresAtLessThanOrderByExpiresAtAsc(OrderStatus.PENDING, now)
+                .stream().map(mapper::toDomain).toList();
     }
 
     @Override

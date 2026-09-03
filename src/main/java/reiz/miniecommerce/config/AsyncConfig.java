@@ -1,6 +1,8 @@
 package reiz.miniecommerce.config;
 
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Configuration;
+import reiz.miniecommerce.modules.orders.adapters.out.config.OrderProperties;
 import org.springframework.scheduling.annotation.EnableAsync;
 import org.springframework.scheduling.annotation.EnableScheduling;
 
@@ -16,5 +18,6 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 @Configuration
 @EnableAsync
 @EnableScheduling
+@EnableConfigurationProperties(OrderProperties.class)
 public class AsyncConfig {
 }

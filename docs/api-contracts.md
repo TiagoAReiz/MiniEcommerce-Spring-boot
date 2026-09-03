@@ -433,8 +433,13 @@ Em uma transação: lê o carrinho, revalida estoque e preço de cada linha, cri
 O carrinho é apagado **depois** do commit, não dentro da transação: o Redis não faz rollback
 junto com o Postgres, e apagar antes faria um checkout falho custar o carrinho ao cliente.
 
-> **Mudou.** `orders` ganhou `address_id` (migration `V3`). O endereço escolhido no checkout
-> não tinha onde ficar: ele só existia em `shipments`, que o dono cria depois do pagamento.
+O checkout também grava `expires_at`: o estoque já saiu da prateleira e ainda não existe
+dinheiro nenhum, então a reserva tem prazo. Quem some antes de pagar devolve o estoque
+sozinho — veja *Reserva de estoque* abaixo.
+
+> **Mudou.** `orders` ganhou `address_id` (migration `V3`) e `expires_at` (migration `V4`).
+> O endereço escolhido no checkout não tinha onde ficar: ele só existia em `shipments`, que
+> o dono cria depois do pagamento.
 
 **201** + `Location: /orders/{id}`
 
@@ -490,6 +495,38 @@ PENDING ──> PAID ──> SHIPPED ──> DELIVERED
 - `CANCELLED`: a partir de `PENDING` ou `PAID`, devolve o estoque e reativa o produto que
   tinha esgotado
 - `DELIVERED` é terminal
+
+Qualquer saída deliberada de `PENDING` apaga o `expires_at`.
+
+### Reserva de estoque (`expires_at`)
+
+O checkout baixa o estoque antes de existir cobrança. Sem prazo, quem fecha a aba na tela de
+pagamento deixa a prateleira vazia para todo mundo, para sempre — e nada no sistema percebe:
+a reconciliação de pagamento só enxerga cobranças que chegaram a ser abertas.
+
+| momento | `expires_at` |
+|---|---|
+| `POST /orders` | agora + `ORDER_RESERVATION_WINDOW` (30 min) |
+| `POST /orders/{id}/payments` | agora + `ORDER_PAYMENT_WINDOW` (24 h) |
+| saiu de `PENDING` (pago, cancelado à mão) | `null` |
+| expirou na varredura | **preservado** |
+
+A janela maior ao abrir a cobrança não é generosidade: o cliente está digitando o cartão, e
+um pagamento aprovado cuja notificação se perdeu ainda é recuperável enquanto a reconciliação
+olhar para trás. Cancelar antes disso devolveria ao estoque um pedido prestes a ser aprovado.
+Por isso `ORDER_PAYMENT_WINDOW` acompanha `MP_RECONCILIATION_MAX_AGE`.
+
+Preservar a data no vencimento é o que transforma a coluna em **histórico de venda perdida**:
+um pedido `CANCELLED` que ainda tem `expires_at` foi abandonado, não cancelado à mão — e os
+`order_items` continuam lá, com o que o cliente ia levar e por quanto.
+
+```sql
+select o.expires_at, oi.product_id, oi.quantity, oi.unit_price
+  from orders o join order_items oi on oi.order_id = o.id
+ where o.status = 'CANCELLED' and o.expires_at is not null;
+```
+
+`expiresAt` aparece na resposta de pedido; é `null` em pedido já concluído.
 
 ---
 

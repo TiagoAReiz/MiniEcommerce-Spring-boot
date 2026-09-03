@@ -1,5 +1,6 @@
 package reiz.miniecommerce.modules.orders.application.services;
 
+import reiz.miniecommerce.modules.orders.adapters.out.config.OrderProperties;
 import reiz.miniecommerce.modules.orders.core.entities.Order;
 import reiz.miniecommerce.modules.orders.core.entities.OrderItem;
 import reiz.miniecommerce.modules.orders.core.entities.OrderStatus;
@@ -15,6 +16,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.UUID;
 
@@ -25,6 +27,7 @@ public class OrderService {
     private final OrderRepository orderRepository;
     private final OrderItemRepository orderItemRepository;
     private final ProductRepository productRepository;
+    private final OrderProperties properties;
 
     @Transactional(readOnly = true)
     public Page<Order> ordersOf(UUID userId, Pageable pageable) {
@@ -66,8 +69,49 @@ public class OrderService {
             restoreStock(orderId);
         }
 
+        // Leaving PENDING by any deliberate route ends the reservation, so a later CANCELLED
+        // order that still carries an expiry can only have been abandoned. That is what makes
+        // the column readable as lost-sale history.
+        order.setExpiresAt(null);
         order.setStatus(target);
         return orderRepository.save(order);
+    }
+
+    /**
+     * Grants the longer reservation an order needs once a charge is open.
+     *
+     * <p>Without this the sweep could cancel and restock an order the customer is paying for
+     * right now, or one already approved whose notification has not landed yet. The window
+     * matches how far back payment reconciliation still looks: past it, nobody is coming.
+     */
+    @Transactional
+    public void extendReservation(UUID orderId) {
+        orderRepository.findById(orderId)
+                .filter(order -> order.getStatus() == OrderStatus.PENDING)
+                .ifPresent(order -> {
+                    order.setExpiresAt(OffsetDateTime.now().plus(properties.getPaymentWindow()));
+                    orderRepository.save(order);
+                });
+    }
+
+    /**
+     * Cancels an order whose reservation ran out and gives the stock back.
+     *
+     * <p>Deliberately not routed through {@link #changeStatus}: that clears {@code expiresAt},
+     * and here the timestamp is exactly what has to survive — it is the evidence of why this
+     * order was cancelled and when the sale was lost.
+     */
+    @Transactional
+    public boolean expire(UUID orderId) {
+        Order order = orderRepository.findById(orderId).orElse(null);
+        if (order == null || order.getStatus() != OrderStatus.PENDING) {
+            return false;
+        }
+
+        restoreStock(orderId);
+        order.setStatus(OrderStatus.CANCELLED);
+        orderRepository.save(order);
+        return true;
     }
 
     private void restoreStock(UUID orderId) {

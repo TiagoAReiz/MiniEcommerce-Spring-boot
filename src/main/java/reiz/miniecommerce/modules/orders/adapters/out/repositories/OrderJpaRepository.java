@@ -7,6 +7,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Repository;
 
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -21,4 +22,7 @@ public interface OrderJpaRepository extends JpaRepository<OrderJpaEntity, UUID> 
     Optional<OrderJpaEntity> findByPaymentId(UUID paymentId);
 
     Optional<OrderJpaEntity> findByShipmentId(UUID shipmentId);
+
+    List<OrderJpaEntity> findByStatusAndExpiresAtLessThanOrderByExpiresAtAsc(
+            OrderStatus status, OffsetDateTime now);
 }

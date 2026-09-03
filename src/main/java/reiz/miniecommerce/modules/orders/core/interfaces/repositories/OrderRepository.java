@@ -6,6 +6,7 @@ import reiz.miniecommerce.modules.orders.core.entities.OrderStatus;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 
+import java.time.OffsetDateTime;
 import java.util.List;
 
 import java.util.Optional;
@@ -29,6 +30,9 @@ public interface OrderRepository {
 
     /** The order a shipment belongs to. */
     Optional<Order> findByShipmentId(UUID shipmentId);
+
+    /** Unpaid orders whose stock reservation has run out. */
+    List<Order> findExpired(OffsetDateTime now);
 
     void deleteById(UUID id);
 }

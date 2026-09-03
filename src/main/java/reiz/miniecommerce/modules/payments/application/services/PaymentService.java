@@ -56,6 +56,10 @@ public class PaymentService {
         order.setPaymentId(payment.getId());
         orderRepository.save(order);
 
+        // The customer reached the payment screen, so the short reservation from checkout is
+        // no longer the right deadline — see OrderService#extendReservation.
+        orderService.extendReservation(orderId);
+
         String email = userRepository.findById(order.getUserId())
                 .map(user -> user.getEmail())
                 .orElse(null);

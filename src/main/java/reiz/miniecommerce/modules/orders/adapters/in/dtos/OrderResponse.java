@@ -17,12 +17,13 @@ public record OrderResponse(
         UUID paymentId,
         UUID shipmentId,
         List<OrderItemResponse> items,
-        OffsetDateTime createdAt) {
+        OffsetDateTime createdAt,
+        OffsetDateTime expiresAt) {
 
     public static OrderResponse of(Order order, List<OrderItemResponse> items, BigDecimal total) {
         int count = items.stream().mapToInt(OrderItemResponse::quantity).sum();
         return new OrderResponse(order.getId(), order.getStatus(), total, count,
                 order.getAddressId(), order.getPaymentId(), order.getShipmentId(),
-                items, order.getCreatedAt());
+                items, order.getCreatedAt(), order.getExpiresAt());
     }
 }

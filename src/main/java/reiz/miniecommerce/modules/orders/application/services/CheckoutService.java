@@ -4,6 +4,7 @@ import reiz.miniecommerce.modules.address.core.interfaces.repositories.AddressRe
 import reiz.miniecommerce.modules.cart.core.entities.Cart;
 import reiz.miniecommerce.modules.cart.core.entities.CartLine;
 import reiz.miniecommerce.modules.cart.core.interfaces.repositories.CartRepository;
+import reiz.miniecommerce.modules.orders.adapters.out.config.OrderProperties;
 import reiz.miniecommerce.modules.orders.core.entities.Order;
 import reiz.miniecommerce.modules.orders.core.entities.OrderItem;
 import reiz.miniecommerce.modules.orders.core.entities.OrderStatus;
@@ -26,6 +27,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.UUID;
 
@@ -46,6 +48,7 @@ public class CheckoutService {
     private final ProductRepository productRepository;
     private final UserRepository userRepository;
     private final AddressRepository addressRepository;
+    private final OrderProperties properties;
 
     @Transactional
     public Order checkout(UUID userId, UUID addressId) {
@@ -57,10 +60,14 @@ public class CheckoutService {
             throw new EmptyCartException();
         }
 
+        // The reservation starts ticking here, not when a payment is opened: the stock is
+        // already taken, and a customer who never reaches the payment screen would otherwise
+        // hold it forever.
         Order order = orderRepository.save(Order.builder()
                 .userId(userId)
                 .addressId(addressId)
                 .status(OrderStatus.PENDING)
+                .expiresAt(OffsetDateTime.now().plus(properties.getReservationWindow()))
                 .build());
 
         for (CartLine line : cart.getLines()) {

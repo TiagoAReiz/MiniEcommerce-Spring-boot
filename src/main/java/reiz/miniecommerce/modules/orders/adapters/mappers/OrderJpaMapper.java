@@ -25,6 +25,7 @@ public class OrderJpaMapper {
                 .paymentId(entity.getPayment() == null ? null : entity.getPayment().getId())
                 .shipmentId(entity.getShipment() == null ? null : entity.getShipment().getId())
                 .status(entity.getStatus())
+                .expiresAt(entity.getExpiresAt())
                 .createdAt(entity.getCreatedAt())
                 .updatedAt(entity.getUpdatedAt())
                 .build();
@@ -42,6 +43,7 @@ public class OrderJpaMapper {
                 .shipment(domain.getShipmentId() == null ? null
                         : ShipmentJpaEntity.builder().id(domain.getShipmentId()).build())
                 .status(domain.getStatus())
+                .expiresAt(domain.getExpiresAt())
                 .build();
     }
 }
