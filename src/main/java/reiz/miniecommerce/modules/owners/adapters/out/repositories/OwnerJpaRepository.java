@@ -13,4 +13,7 @@ public interface OwnerJpaRepository extends JpaRepository<OwnerJpaEntity, UUID> 
     Optional<OwnerJpaEntity> findByGoogleSub(String googleSub);
 
     Optional<OwnerJpaEntity> findByEmailIgnoreCase(String email);
+
+    /** Oldest first, so the seeded storefront wins over any operator added later. */
+    Optional<OwnerJpaEntity> findFirstByOrderByCreatedAtAsc();
 }

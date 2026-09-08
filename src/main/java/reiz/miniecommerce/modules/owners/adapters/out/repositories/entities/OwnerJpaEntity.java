@@ -45,6 +45,13 @@ public class OwnerJpaEntity {
     @Column(name = "email", nullable = false, unique = true, length = 255)
     private String email;
 
+    /**
+     * The store's shipping origin, digits only. Null until the operator configures it, which
+     * is what keeps freight off until the store is ready to charge for it.
+     */
+    @Column(name = "origin_zip_code", length = 8)
+    private String originZipCode;
+
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;

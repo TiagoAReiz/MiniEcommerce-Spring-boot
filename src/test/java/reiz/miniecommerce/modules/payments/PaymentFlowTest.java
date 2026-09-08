@@ -6,6 +6,7 @@ import reiz.miniecommerce.modules.auth.core.entities.AuthenticatedPrincipal;
 import reiz.miniecommerce.modules.auth.core.interfaces.repositories.AccessTokenIssuer;
 import reiz.miniecommerce.modules.orders.core.entities.OrderStatus;
 import reiz.miniecommerce.modules.orders.core.interfaces.repositories.OrderRepository;
+import reiz.miniecommerce.modules.owners.core.interfaces.repositories.OwnerRepository;
 import reiz.miniecommerce.modules.payments.core.entities.GatewayPayment;
 import reiz.miniecommerce.modules.payments.core.entities.PaymentIntent;
 import reiz.miniecommerce.modules.payments.core.interfaces.repositories.PaymentGateway;
@@ -14,6 +15,7 @@ import reiz.miniecommerce.modules.products.core.entities.Product;
 import reiz.miniecommerce.modules.products.core.interfaces.repositories.ProductRepository;
 import reiz.miniecommerce.modules.users.core.entities.User;
 import reiz.miniecommerce.modules.users.core.interfaces.repositories.UserRepository;
+import reiz.miniecommerce.testsupport.Storefront;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -51,7 +53,11 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @AutoConfigureMockMvc
 @TestPropertySource(properties = {
         "app.mercado-pago.webhook-secret=segredo-de-teste-do-webhook",
-        "app.mercado-pago.access-token=test-token"
+        "app.mercado-pago.access-token=test-token",
+        // the stub gateway is not the only thing kept off the network: a closed port stops the
+        // checkout from resolving a CEP, and zero freight leaves the charged amount as the goods
+        "app.shipping.cep-base-url=http://127.0.0.1:1",
+        "app.shipping.fallback-cost=0.00"
 })
 class PaymentFlowTest {
 
@@ -97,12 +103,15 @@ class PaymentFlowTest {
     @Autowired private ProductRepository productRepository;
     @Autowired private OrderRepository orderRepository;
     @Autowired private PaymentRepository paymentRepository;
+    @Autowired private OwnerRepository ownerRepository;
 
     private String bearer;
     private UUID orderId;
 
     @BeforeEach
     void placeAnOrder() throws Exception {
+        Storefront.sellsWithFreight(ownerRepository);
+
         StubGateway.PAYMENTS.clear();
         StubGateway.OPENED.clear();
 

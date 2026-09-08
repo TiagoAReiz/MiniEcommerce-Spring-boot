@@ -4,10 +4,12 @@ import reiz.miniecommerce.modules.address.core.entities.Address;
 import reiz.miniecommerce.modules.address.core.interfaces.repositories.AddressRepository;
 import reiz.miniecommerce.modules.auth.core.entities.AuthenticatedPrincipal;
 import reiz.miniecommerce.modules.auth.core.interfaces.repositories.AccessTokenIssuer;
+import reiz.miniecommerce.modules.owners.core.interfaces.repositories.OwnerRepository;
 import reiz.miniecommerce.modules.products.core.entities.Product;
 import reiz.miniecommerce.modules.products.core.interfaces.repositories.ProductRepository;
 import reiz.miniecommerce.modules.users.core.entities.User;
 import reiz.miniecommerce.modules.users.core.interfaces.repositories.UserRepository;
+import reiz.miniecommerce.testsupport.Storefront;
 import com.jayway.jsonpath.JsonPath;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -15,6 +17,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
+import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.math.BigDecimal;
@@ -33,6 +36,12 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  */
 @SpringBootTest
 @AutoConfigureMockMvc
+@TestPropertySource(properties = {
+        // a dead endpoint instead of the real CEP provider, and freight at zero so the walk
+        // from checkout to review never depends on someone else's uptime or price
+        "app.shipping.cep-base-url=http://127.0.0.1:1",
+        "app.shipping.fallback-cost=0.00"
+})
 class OrderLifecycleTest {
 
     @Autowired private MockMvc mockMvc;
@@ -40,6 +49,7 @@ class OrderLifecycleTest {
     @Autowired private UserRepository userRepository;
     @Autowired private AddressRepository addressRepository;
     @Autowired private ProductRepository productRepository;
+    @Autowired private OwnerRepository ownerRepository;
 
     private String bearer;
     private String ownerBearer;
@@ -48,6 +58,8 @@ class OrderLifecycleTest {
 
     @BeforeEach
     void placeAnOrder() throws Exception {
+        Storefront.sellsWithFreight(ownerRepository);
+
         User user = customer();
         bearer = bearerFor(user.getId(), AuthenticatedPrincipal.Role.USER);
         ownerBearer = bearerFor(UUID.randomUUID(), AuthenticatedPrincipal.Role.OWNER);

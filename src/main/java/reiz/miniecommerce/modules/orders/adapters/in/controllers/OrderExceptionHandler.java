@@ -7,6 +7,7 @@ import reiz.miniecommerce.modules.orders.core.exceptions.InvalidStatusTransition
 import reiz.miniecommerce.modules.orders.core.exceptions.OrderNotFoundException;
 import reiz.miniecommerce.modules.orders.core.exceptions.PriceChangedException;
 import reiz.miniecommerce.modules.products.core.exceptions.InsufficientStockException;
+import reiz.miniecommerce.modules.shipments.core.exceptions.ShippingOriginNotConfiguredException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -43,6 +44,20 @@ public class OrderExceptionHandler {
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(
                 HttpStatus.CONFLICT, "Carrinho vazio ou expirado");
         problem.setProperty("code", "EMPTY_CART");
+        return problem;
+    }
+
+    /**
+     * 409 with a stable code rather than a 500, even though the cause is on the shop's side
+     * and nothing the customer did. A 500 would tell the front end only that something broke;
+     * this lets it say the shop is not taking orders yet, which is what is actually true. The
+     * detail stays vague on purpose — a customer has no use for the shop's configuration.
+     */
+    @ExceptionHandler(ShippingOriginNotConfiguredException.class)
+    public ProblemDetail onNoShippingOrigin(ShippingOriginNotConfiguredException e) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(
+                HttpStatus.CONFLICT, "A loja ainda não está aceitando pedidos");
+        problem.setProperty("code", "SHIPPING_ORIGIN_NOT_CONFIGURED");
         return problem;
     }
 

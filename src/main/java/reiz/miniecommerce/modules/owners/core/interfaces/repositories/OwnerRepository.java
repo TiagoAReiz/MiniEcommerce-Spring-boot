@@ -24,5 +24,15 @@ public interface OwnerRepository {
      */
     Optional<Owner> findByEmail(String email);
 
+    /**
+     * The store itself — the oldest owner row.
+     *
+     * <p>Products carry no owner, so there is exactly one storefront and one shipping origin
+     * however many operators end up with a seat. This is the single place that assumption
+     * lives: the day a product knows who sells it, freight looks up the origin from the
+     * product instead and this method goes away.
+     */
+    Optional<Owner> findStore();
+
     void deleteById(UUID id);
 }

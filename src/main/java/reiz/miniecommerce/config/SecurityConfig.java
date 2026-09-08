@@ -67,6 +67,8 @@ public class SecurityConfig {
                         .requestMatchers("/orders/**").hasAnyRole("USER", "OWNER")
                         .requestMatchers("/payments/**").hasAnyRole("USER", "OWNER")
                         .requestMatchers("/shipments/**").hasAnyRole("USER", "OWNER")
+                        // store settings, not customer data: no USER has any business here
+                        .requestMatchers("/owners/**").hasRole("OWNER")
                         .anyRequest().authenticated())
                 .oauth2ResourceServer(oauth2 -> oauth2
                         .jwt(jwt -> jwt.decoder(jwtDecoder)

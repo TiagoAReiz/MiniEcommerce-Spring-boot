@@ -8,6 +8,8 @@ import reiz.miniecommerce.modules.shipments.adapters.out.repositories.entities.S
 import reiz.miniecommerce.modules.users.adapters.out.repositories.entities.UserJpaEntity;
 import org.springframework.stereotype.Component;
 
+import java.math.BigDecimal;
+
 /**
  * Translates between the {@link OrderJpaEntity} persistence entity and the {@link Order} domain model.
  */
@@ -25,6 +27,8 @@ public class OrderJpaMapper {
                 .paymentId(entity.getPayment() == null ? null : entity.getPayment().getId())
                 .shipmentId(entity.getShipment() == null ? null : entity.getShipment().getId())
                 .status(entity.getStatus())
+                .shippingCost(entity.getShippingCost())
+                .shippingDistanceKm(entity.getShippingDistanceKm())
                 .expiresAt(entity.getExpiresAt())
                 .createdAt(entity.getCreatedAt())
                 .updatedAt(entity.getUpdatedAt())
@@ -43,6 +47,11 @@ public class OrderJpaMapper {
                 .shipment(domain.getShipmentId() == null ? null
                         : ShipmentJpaEntity.builder().id(domain.getShipmentId()).build())
                 .status(domain.getStatus())
+                // Not optional: a save merges the whole row, so leaving freight out here
+                // would zero a quote the customer already agreed to every time an order is
+                // touched to attach a payment or a shipment.
+                .shippingCost(domain.getShippingCost() == null ? BigDecimal.ZERO : domain.getShippingCost())
+                .shippingDistanceKm(domain.getShippingDistanceKm())
                 .expiresAt(domain.getExpiresAt())
                 .build();
     }

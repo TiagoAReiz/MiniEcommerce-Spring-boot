@@ -40,6 +40,11 @@ public class OwnerRepositoryAdapter implements OwnerRepository {
     }
 
     @Override
+    public Optional<Owner> findStore() {
+        return jpaRepository.findFirstByOrderByCreatedAtAsc().map(mapper::toDomain);
+    }
+
+    @Override
     public void deleteById(UUID id) {
         jpaRepository.deleteById(id);
     }

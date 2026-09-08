@@ -6,14 +6,17 @@ import reiz.miniecommerce.modules.cart.core.entities.Cart;
 import reiz.miniecommerce.modules.cart.core.interfaces.repositories.CartRepository;
 import reiz.miniecommerce.modules.orders.application.services.CheckoutService;
 import reiz.miniecommerce.modules.orders.core.entities.Order;
+import reiz.miniecommerce.modules.owners.core.interfaces.repositories.OwnerRepository;
 import reiz.miniecommerce.modules.products.core.entities.Product;
 import reiz.miniecommerce.modules.products.core.interfaces.repositories.ProductRepository;
 import reiz.miniecommerce.modules.users.core.entities.User;
 import reiz.miniecommerce.modules.users.core.interfaces.repositories.UserRepository;
+import reiz.miniecommerce.testsupport.Storefront;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.test.context.TestPropertySource;
 
 import javax.sql.DataSource;
 import java.math.BigDecimal;
@@ -47,6 +50,12 @@ import static org.assertj.core.api.Assertions.assertThat;
  * The race lives in the service transaction, and that is what these two threads exercise.
  */
 @SpringBootTest
+@TestPropertySource(properties = {
+        // the race is the only thing racing here: a dead endpoint keeps a CEP lookup off the
+        // network, and zero freight keeps it out of the price
+        "app.shipping.cep-base-url=http://127.0.0.1:1",
+        "app.shipping.fallback-cost=0.00"
+})
 class StockConcurrencyTest {
 
     private static final BigDecimal PRICE = new BigDecimal("49.90");
@@ -56,6 +65,7 @@ class StockConcurrencyTest {
     @Autowired private AddressRepository addressRepository;
     @Autowired private ProductRepository productRepository;
     @Autowired private CartRepository cartRepository;
+    @Autowired private OwnerRepository ownerRepository;
     @Autowired private DataSource dataSource;
 
     private UUID productId;
@@ -76,6 +86,8 @@ class StockConcurrencyTest {
 
     @BeforeEach
     void setUp() {
+        Storefront.sellsWithFreight(ownerRepository);
+
         productId = productRepository.save(Product.builder()
                 .name("Ultima unidade " + UUID.randomUUID())
                 .price(PRICE)

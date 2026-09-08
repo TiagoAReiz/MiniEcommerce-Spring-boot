@@ -123,9 +123,24 @@ public class OrderService {
         }
     }
 
-    /** Sum of the frozen line prices — the amount actually owed for this order. */
+    /**
+     * The amount actually owed for this order: frozen line prices plus frozen freight.
+     *
+     * <p>This is what the payment gateway charges, so freight has to be part of it — an
+     * order whose response shows a delivery fee and whose charge omits it would ship for
+     * free and nobody would notice until the accounting did.
+     */
     @Transactional(readOnly = true)
     public java.math.BigDecimal totalOf(UUID orderId) {
+        Order order = orderRepository.findById(orderId)
+                .orElseThrow(() -> new OrderNotFoundException(orderId));
+
+        return order.totalWith(itemsTotalOf(orderId));
+    }
+
+    /** Goods only, before delivery. */
+    @Transactional(readOnly = true)
+    public java.math.BigDecimal itemsTotalOf(UUID orderId) {
         return orderItemRepository.findByOrderId(orderId).stream()
                 .map(OrderItem::subtotal)
                 .reduce(java.math.BigDecimal.ZERO, java.math.BigDecimal::add);

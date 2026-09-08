@@ -26,6 +26,14 @@ public class Owner {
     private String googleSub;
     private String email;
 
+    /**
+     * Where orders ship from, and so the point every freight quote measures against.
+     *
+     * <p>Null until the operator sets it, which is also the switch for the whole feature:
+     * a store without an origin charges no freight at all rather than guessing a price.
+     */
+    private String originZipCode;
+
     private OffsetDateTime createdAt;
     private OffsetDateTime updatedAt;
 }

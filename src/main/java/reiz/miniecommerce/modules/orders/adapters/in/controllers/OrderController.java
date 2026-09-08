@@ -99,11 +99,13 @@ public class OrderController {
                 .map(item -> OrderItemResponse.of(item, productOf(products, photos, item.getProductId())))
                 .toList();
 
-        BigDecimal total = lines.stream()
+        // Goods only. The delivery fee is frozen on the order, and OrderResponse adds the
+        // two into the total — the same total OrderService#totalOf hands the payment gateway.
+        BigDecimal itemsTotal = lines.stream()
                 .map(OrderItemResponse::subtotal)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
 
-        return OrderResponse.of(order, lines, total);
+        return OrderResponse.of(order, lines, itemsTotal);
     }
 
     private ProductResponse productOf(Map<UUID, Product> products,

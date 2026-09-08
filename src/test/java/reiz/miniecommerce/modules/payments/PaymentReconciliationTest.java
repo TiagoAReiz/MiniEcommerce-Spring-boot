@@ -6,6 +6,7 @@ import reiz.miniecommerce.modules.auth.core.entities.AuthenticatedPrincipal;
 import reiz.miniecommerce.modules.auth.core.interfaces.repositories.AccessTokenIssuer;
 import reiz.miniecommerce.modules.orders.core.entities.OrderStatus;
 import reiz.miniecommerce.modules.orders.core.interfaces.repositories.OrderRepository;
+import reiz.miniecommerce.modules.owners.core.interfaces.repositories.OwnerRepository;
 import reiz.miniecommerce.modules.payments.application.services.PaymentReconciliationJob;
 import reiz.miniecommerce.modules.payments.core.entities.GatewayPayment;
 import reiz.miniecommerce.modules.payments.core.entities.PaymentIntent;
@@ -16,6 +17,7 @@ import reiz.miniecommerce.modules.products.core.entities.Product;
 import reiz.miniecommerce.modules.products.core.interfaces.repositories.ProductRepository;
 import reiz.miniecommerce.modules.users.core.entities.User;
 import reiz.miniecommerce.modules.users.core.interfaces.repositories.UserRepository;
+import reiz.miniecommerce.testsupport.Storefront;
 import com.jayway.jsonpath.JsonPath;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -26,6 +28,7 @@ import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
 import org.springframework.http.MediaType;
+import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.math.BigDecimal;
@@ -48,6 +51,11 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  */
 @SpringBootTest
 @AutoConfigureMockMvc
+@TestPropertySource(properties = {
+        // no CEP round-trip during checkout, and freight priced out of the settled amounts
+        "app.shipping.cep-base-url=http://127.0.0.1:1",
+        "app.shipping.fallback-cost=0.00"
+})
 class PaymentReconciliationTest {
 
     /** Approved payments, keyed by the external reference we sent when opening the charge. */
@@ -94,12 +102,15 @@ class PaymentReconciliationTest {
     @Autowired private OrderRepository orderRepository;
     @Autowired private PaymentRepository paymentRepository;
     @Autowired private PaymentReconciliationJob reconciliationJob;
+    @Autowired private OwnerRepository ownerRepository;
 
     private String bearer;
     private UUID orderId;
 
     @BeforeEach
     void placeAnOrderAndOpenACharge() throws Exception {
+        Storefront.sellsWithFreight(ownerRepository);
+
         GatewayWithApprovals.APPROVED.clear();
         GatewayWithApprovals.UNREACHABLE.clear();
 

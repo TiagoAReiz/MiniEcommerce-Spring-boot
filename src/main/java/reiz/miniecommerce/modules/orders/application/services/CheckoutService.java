@@ -1,144 +1,45 @@
 package reiz.miniecommerce.modules.orders.application.services;
 
-import reiz.miniecommerce.modules.address.core.interfaces.repositories.AddressRepository;
-import reiz.miniecommerce.modules.cart.core.entities.Cart;
-import reiz.miniecommerce.modules.cart.core.entities.CartLine;
-import reiz.miniecommerce.modules.cart.core.interfaces.repositories.CartRepository;
-import reiz.miniecommerce.modules.orders.adapters.out.config.OrderProperties;
 import reiz.miniecommerce.modules.orders.core.entities.Order;
 import reiz.miniecommerce.modules.orders.core.entities.OrderItem;
-import reiz.miniecommerce.modules.orders.core.entities.OrderStatus;
-import reiz.miniecommerce.modules.orders.core.exceptions.AddressNotOwnedException;
-import reiz.miniecommerce.modules.orders.core.exceptions.CheckoutBlockedException;
-import reiz.miniecommerce.modules.orders.core.exceptions.EmptyCartException;
-import reiz.miniecommerce.modules.orders.core.exceptions.PriceChangedException;
 import reiz.miniecommerce.modules.orders.core.interfaces.repositories.OrderItemRepository;
-import reiz.miniecommerce.modules.orders.core.interfaces.repositories.OrderRepository;
-import reiz.miniecommerce.modules.products.core.entities.Product;
-import reiz.miniecommerce.modules.products.core.exceptions.InsufficientStockException;
-import reiz.miniecommerce.modules.products.core.exceptions.ProductNotFoundException;
-import reiz.miniecommerce.modules.products.core.interfaces.repositories.ProductRepository;
-import reiz.miniecommerce.modules.users.core.entities.User;
-import reiz.miniecommerce.modules.users.core.exceptions.UserNotFoundException;
-import reiz.miniecommerce.modules.users.core.interfaces.repositories.UserRepository;
+import reiz.miniecommerce.modules.shipments.application.services.ShippingQuoteService;
+import reiz.miniecommerce.modules.shipments.core.entities.ShippingQuote;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.transaction.support.TransactionSynchronization;
-import org.springframework.transaction.support.TransactionSynchronizationManager;
 
-import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.UUID;
 
 /**
  * Turns a cart into an order.
  *
- * <p>The single most delicate operation in the system: it reads state that lives in Redis,
- * writes three tables, and moves stock. Everything that touches Postgres runs in one
- * transaction, so a failure anywhere leaves no half-made order and no stock quietly missing.
+ * <p>Two steps, in this order and for a reason. First the freight is quoted, which reaches
+ * out to a third-party CEP service; then {@link OrderPlacementService} writes three tables
+ * in one transaction. Doing it the other way round — quoting from inside the transaction —
+ * would hold one of the five pooled connections open across the network call.
+ *
+ * <p>This class is intentionally not annotated: the transaction has to start at the
+ * delegate, and a {@code @Transactional} method invoked on {@code this} would bypass the
+ * proxy and quietly run without one.
  */
 @Service
 @RequiredArgsConstructor
 public class CheckoutService {
 
-    private final CartRepository cartRepository;
-    private final OrderRepository orderRepository;
+    private final OrderPlacementService placementService;
+    private final ShippingQuoteService shippingQuoteService;
     private final OrderItemRepository orderItemRepository;
-    private final ProductRepository productRepository;
-    private final UserRepository userRepository;
-    private final AddressRepository addressRepository;
-    private final OrderProperties properties;
 
-    @Transactional
     public Order checkout(UUID userId, UUID addressId) {
-        requireCompleteProfile(userId);
-        requireOwnAddress(userId, addressId);
+        // Rejected checkouts should not cost a CEP lookup, and an address the caller does not
+        // own should never be resolved to coordinates on their behalf.
+        placementService.requireCheckoutable(userId, addressId);
 
-        Cart cart = cartRepository.findByUserId(userId).orElseThrow(EmptyCartException::new);
-        if (cart.hasNoLines()) {
-            throw new EmptyCartException();
-        }
+        ShippingQuote quote = shippingQuoteService.quoteFor(addressId);
 
-        // The reservation starts ticking here, not when a payment is opened: the stock is
-        // already taken, and a customer who never reaches the payment screen would otherwise
-        // hold it forever.
-        Order order = orderRepository.save(Order.builder()
-                .userId(userId)
-                .addressId(addressId)
-                .status(OrderStatus.PENDING)
-                .expiresAt(OffsetDateTime.now().plus(properties.getReservationWindow()))
-                .build());
-
-        for (CartLine line : cart.getLines()) {
-            Product product = productRepository.findById(line.getProductId())
-                    .orElseThrow(() -> new ProductNotFoundException(line.getProductId()));
-
-            requireUnchangedPrice(product, line);
-
-            // the stock check and the deduction happen in one statement, so two simultaneous
-            // checkouts cannot both be told the last unit is theirs
-            if (!productRepository.takeStock(product.getId(), line.getQuantity())) {
-                throw new InsufficientStockException(product.getId(), line.getQuantity());
-            }
-
-            orderItemRepository.save(OrderItem.builder()
-                    .orderId(order.getId())
-                    .productId(product.getId())
-                    .quantity(line.getQuantity())
-                    .unitPrice(line.getUnitPrice())
-                    .build());
-        }
-
-        clearCartOnceCommitted(userId);
-        return order;
-    }
-
-    /**
-     * The cart is not part of the database transaction — Redis cannot roll back with it. So
-     * the delete is deferred until the commit actually succeeds; a rollback leaves the
-     * customer's cart untouched instead of losing it along with the failed order.
-     */
-    private void clearCartOnceCommitted(UUID userId) {
-        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
-            cartRepository.deleteByUserId(userId);
-            return;
-        }
-        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-            @Override
-            public void afterCommit() {
-                cartRepository.deleteByUserId(userId);
-            }
-        });
-    }
-
-    /**
-     * Price is checked again here, not only when the item entered the cart: a cart survives
-     * seven days in Redis and the price can move in the meantime. Stock is not checked here —
-     * {@code takeStock} checks and deducts atomically, and a check beforehand would only be a
-     * second opinion that a concurrent checkout can invalidate.
-     */
-    private void requireUnchangedPrice(Product product, CartLine line) {
-        if (product.getPrice().compareTo(line.getUnitPrice()) != 0) {
-            throw new PriceChangedException(product.getId(), line.getUnitPrice(), product.getPrice());
-        }
-    }
-
-    private void requireCompleteProfile(UUID userId) {
-        User user = userRepository.findById(userId).orElseThrow(() -> new UserNotFoundException(userId));
-        if (!user.canCheckout()) {
-            throw new CheckoutBlockedException();
-        }
-    }
-
-    private void requireOwnAddress(UUID userId, UUID addressId) {
-        boolean owned = addressRepository.findById(addressId)
-                .filter(address -> userId.equals(address.getUserId()))
-                .isPresent();
-
-        if (!owned) {
-            throw new AddressNotOwnedException(addressId);
-        }
+        return placementService.place(userId, addressId, quote);
     }
 
     /** Convenience for the response: the items just written for this order. */

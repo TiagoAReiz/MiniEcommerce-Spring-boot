@@ -4,16 +4,19 @@ import reiz.miniecommerce.modules.address.core.entities.Address;
 import reiz.miniecommerce.modules.address.core.interfaces.repositories.AddressRepository;
 import reiz.miniecommerce.modules.auth.core.entities.AuthenticatedPrincipal;
 import reiz.miniecommerce.modules.auth.core.interfaces.repositories.AccessTokenIssuer;
+import reiz.miniecommerce.modules.owners.core.interfaces.repositories.OwnerRepository;
 import reiz.miniecommerce.modules.products.core.entities.Product;
 import reiz.miniecommerce.modules.products.core.interfaces.repositories.ProductRepository;
 import reiz.miniecommerce.modules.users.core.entities.User;
 import reiz.miniecommerce.modules.users.core.interfaces.repositories.UserRepository;
+import reiz.miniecommerce.testsupport.Storefront;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
+import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.math.BigDecimal;
@@ -34,6 +37,11 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  */
 @SpringBootTest
 @AutoConfigureMockMvc
+@TestPropertySource(properties = {
+        // unreachable CEP provider, zero-priced freight: this is about stock, not delivery
+        "app.shipping.cep-base-url=http://127.0.0.1:1",
+        "app.shipping.fallback-cost=0.00"
+})
 class ProductStockLifecycleTest {
 
     @Autowired private MockMvc mockMvc;
@@ -41,6 +49,7 @@ class ProductStockLifecycleTest {
     @Autowired private UserRepository userRepository;
     @Autowired private AddressRepository addressRepository;
     @Autowired private ProductRepository productRepository;
+    @Autowired private OwnerRepository ownerRepository;
 
     private String bearer;
     private String ownerBearer;
@@ -48,6 +57,8 @@ class ProductStockLifecycleTest {
 
     @BeforeEach
     void signIn() {
+        Storefront.sellsWithFreight(ownerRepository);
+
         User user = userRepository.save(User.fromGoogleProfile(
                 "sub-" + UUID.randomUUID(), "Tiago", UUID.randomUUID() + "@exemplo.com", null));
         user.setCpf(randomCpf());

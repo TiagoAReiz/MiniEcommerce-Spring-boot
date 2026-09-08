@@ -1,5 +1,6 @@
 package reiz.miniecommerce.config;
 
+import org.springframework.boot.cache.autoconfigure.RedisCacheManagerBuilderCustomizer;
 import org.springframework.cache.annotation.EnableCaching;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -27,6 +28,13 @@ public class RedisCacheConfig {
     private static final Duration DEFAULT_TTL = Duration.ofMinutes(10);
 
     /**
+     * Postal-code coordinates get their own, far longer window: a CEP does not move. The
+     * store's own origin is resolved on every checkout, so this is also what keeps a
+     * provider outage from being felt on most orders.
+     */
+    private static final Duration CEP_TTL = Duration.ofDays(30);
+
+    /**
      * Default typing writes the concrete class into the payload, so a cached value comes
      * back as its domain type instead of a {@code LinkedHashMap}. The validator keeps that
      * from turning into a deserialization gadget: only our own classes and the JDK types
@@ -40,6 +48,11 @@ public class RedisCacheConfig {
                 .allowIfSubType("java.math.")
                 .allowIfSubType("java.time.")
                 .build();
+    }
+
+    @Bean
+    public RedisCacheManagerBuilderCustomizer cepCoordinatesTtl(RedisCacheConfiguration defaults) {
+        return builder -> builder.withCacheConfiguration("cepCoordinates", defaults.entryTtl(CEP_TTL));
     }
 
     @Bean

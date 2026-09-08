@@ -5,16 +5,19 @@ import reiz.miniecommerce.modules.address.core.interfaces.repositories.AddressRe
 import reiz.miniecommerce.modules.auth.core.entities.AuthenticatedPrincipal;
 import reiz.miniecommerce.modules.auth.core.interfaces.repositories.AccessTokenIssuer;
 import reiz.miniecommerce.modules.cart.core.interfaces.repositories.CartRepository;
+import reiz.miniecommerce.modules.owners.core.interfaces.repositories.OwnerRepository;
 import reiz.miniecommerce.modules.products.core.entities.Product;
 import reiz.miniecommerce.modules.products.core.interfaces.repositories.ProductRepository;
 import reiz.miniecommerce.modules.users.core.entities.User;
 import reiz.miniecommerce.modules.users.core.interfaces.repositories.UserRepository;
+import reiz.miniecommerce.testsupport.Storefront;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
+import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.math.BigDecimal;
@@ -29,6 +32,13 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 @SpringBootTest
 @AutoConfigureMockMvc
+@TestPropertySource(properties = {
+        // unreachable on purpose: no checkout in this class should resolve a postal code
+        // against a live API, and a zero contingency rate keeps freight out of the totals
+        // asserted below
+        "app.shipping.cep-base-url=http://127.0.0.1:1",
+        "app.shipping.fallback-cost=0.00"
+})
 class CheckoutTest {
 
     @Autowired private MockMvc mockMvc;
@@ -37,6 +47,7 @@ class CheckoutTest {
     @Autowired private AddressRepository addressRepository;
     @Autowired private ProductRepository productRepository;
     @Autowired private CartRepository cartRepository;
+    @Autowired private OwnerRepository ownerRepository;
 
     private UUID userId;
     private String bearer;
@@ -46,6 +57,8 @@ class CheckoutTest {
 
     @BeforeEach
     void setUp() {
+        Storefront.sellsWithFreight(ownerRepository);
+
         User user = userRepository.save(User.fromGoogleProfile(
                 "sub-" + UUID.randomUUID(), "Tiago", UUID.randomUUID() + "@exemplo.com", null));
         user.setCpf(String.valueOf(System.nanoTime()).substring(0, 11));

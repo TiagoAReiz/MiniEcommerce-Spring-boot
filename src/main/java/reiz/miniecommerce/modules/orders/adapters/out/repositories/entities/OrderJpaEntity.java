@@ -25,6 +25,7 @@ import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.UpdateTimestamp;
 import org.hibernate.annotations.UuidGenerator;
 
+import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.util.UUID;
 
@@ -63,6 +64,12 @@ public class OrderJpaEntity {
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false, length = 30)
     private OrderStatus status;
+
+    @Column(name = "shipping_cost", nullable = false, precision = 12, scale = 2)
+    private BigDecimal shippingCost;
+
+    @Column(name = "shipping_distance_km", precision = 10, scale = 2)
+    private BigDecimal shippingDistanceKm;
 
     @Column(name = "expires_at")
     private OffsetDateTime expiresAt;

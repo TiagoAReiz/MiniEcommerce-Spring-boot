@@ -9,6 +9,7 @@ import reiz.miniecommerce.modules.orders.application.services.OrderExpirationJob
 import reiz.miniecommerce.modules.orders.core.entities.Order;
 import reiz.miniecommerce.modules.orders.core.entities.OrderStatus;
 import reiz.miniecommerce.modules.orders.core.interfaces.repositories.OrderRepository;
+import reiz.miniecommerce.modules.owners.core.interfaces.repositories.OwnerRepository;
 import reiz.miniecommerce.modules.payments.core.entities.GatewayPayment;
 import reiz.miniecommerce.modules.payments.core.entities.PaymentIntent;
 import reiz.miniecommerce.modules.payments.core.interfaces.repositories.PaymentGateway;
@@ -16,6 +17,7 @@ import reiz.miniecommerce.modules.products.core.entities.Product;
 import reiz.miniecommerce.modules.products.core.interfaces.repositories.ProductRepository;
 import reiz.miniecommerce.modules.users.core.entities.User;
 import reiz.miniecommerce.modules.users.core.interfaces.repositories.UserRepository;
+import reiz.miniecommerce.testsupport.Storefront;
 import com.jayway.jsonpath.JsonPath;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -53,7 +55,10 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
         "app.orders.expiration-interval=1h",
         "app.orders.reservation-window=30m",
         "app.orders.payment-window=24h",
-        "app.mercado-pago.access-token=test-token"
+        "app.mercado-pago.access-token=test-token",
+        // no live CEP lookups from a suite about deadlines, and freight priced at zero
+        "app.shipping.cep-base-url=http://127.0.0.1:1",
+        "app.shipping.fallback-cost=0.00"
 })
 class OrderExpirationTest {
 
@@ -93,6 +98,7 @@ class OrderExpirationTest {
     @Autowired private OrderRepository orderRepository;
     @Autowired private CartRepository cartRepository;
     @Autowired private OrderExpirationJob expirationJob;
+    @Autowired private OwnerRepository ownerRepository;
 
     private UUID userId;
     private String bearer;
@@ -102,6 +108,8 @@ class OrderExpirationTest {
 
     @BeforeEach
     void setUp() {
+        Storefront.sellsWithFreight(ownerRepository);
+
         User user = userRepository.save(User.fromGoogleProfile(
                 "sub-" + UUID.randomUUID(), "Tiago", UUID.randomUUID() + "@exemplo.com", null));
         user.setCpf(String.valueOf(System.nanoTime()).substring(0, 11));
