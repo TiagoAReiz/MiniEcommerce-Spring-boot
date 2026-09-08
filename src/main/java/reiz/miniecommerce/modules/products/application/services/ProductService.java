@@ -46,6 +46,11 @@ public class ProductService {
         existing.setDescription(changes.getDescription());
         existing.setPrice(changes.getPrice());
         existing.setStock(changes.getStock());
+        existing.setCategory(changes.getCategory());
+        // Replaced wholesale, not merged: the operator edits the sheet as a sheet, and
+        // merging would leave no way to delete a row that was typed by mistake.
+        existing.setHighlights(changes.getHighlights());
+        existing.setSpecs(changes.getSpecs());
         if (active != null) {
             existing.setActive(active);
         }

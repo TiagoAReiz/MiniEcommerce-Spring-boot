@@ -2,6 +2,7 @@ package reiz.miniecommerce.modules.products.core.entities;
 
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
+import java.util.List;
 import java.util.UUID;
 
 import lombok.AllArgsConstructor;
@@ -29,6 +30,21 @@ public class Product {
     private BigDecimal price;
     private Integer stock;
     private boolean active;
+
+    /**
+     * What the catalogue filters by. Null means the product answers only to "Todos" — the
+     * filter bar is built from the categories that are actually in use, so an unfilled one
+     * costs the product a place in the bar but never hides it from the full listing.
+     */
+    private String category;
+
+    /** The headline figures on the card, in the order they are shown. Never null; may be empty. */
+    @Builder.Default
+    private List<ProductHighlight> highlights = List.of();
+
+    /** The spec sheet, in the operator's order. Never null; may be empty. */
+    @Builder.Default
+    private List<ProductSpec> specs = List.of();
 
     private OffsetDateTime createdAt;
     private OffsetDateTime updatedAt;

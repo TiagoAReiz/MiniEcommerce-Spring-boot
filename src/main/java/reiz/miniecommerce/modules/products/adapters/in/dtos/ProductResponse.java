@@ -1,6 +1,8 @@
 package reiz.miniecommerce.modules.products.adapters.in.dtos;
 
 import reiz.miniecommerce.modules.products.core.entities.Product;
+import reiz.miniecommerce.modules.products.core.entities.ProductHighlight;
+import reiz.miniecommerce.modules.products.core.entities.ProductSpec;
 
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
@@ -19,6 +21,9 @@ public record ProductResponse(
         Integer stock,
         boolean active,
         boolean sellable,
+        String category,
+        List<ProductHighlight> highlights,
+        List<ProductSpec> specs,
         List<ProductPhotoResponse> photos,
         OffsetDateTime createdAt) {
 
@@ -31,6 +36,9 @@ public record ProductResponse(
                 product.getStock(),
                 product.isActive(),
                 product.isSellable(),
+                product.getCategory(),
+                product.getHighlights(),
+                product.getSpecs(),
                 photos,
                 product.getCreatedAt());
     }

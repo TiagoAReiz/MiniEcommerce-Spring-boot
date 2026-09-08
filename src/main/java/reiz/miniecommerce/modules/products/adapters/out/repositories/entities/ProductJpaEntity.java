@@ -11,12 +11,17 @@ import lombok.EqualsAndHashCode;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
+import reiz.miniecommerce.modules.products.core.entities.ProductHighlight;
+import reiz.miniecommerce.modules.products.core.entities.ProductSpec;
 import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.annotations.UpdateTimestamp;
 import org.hibernate.annotations.UuidGenerator;
+import org.hibernate.type.SqlTypes;
 
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
+import java.util.List;
 import java.util.UUID;
 
 @Entity
@@ -49,6 +54,22 @@ public class ProductJpaEntity {
 
     @Column(name = "active", nullable = false)
     private boolean active;
+
+    @Column(name = "category", length = 60)
+    private String category;
+
+    /**
+     * Stored as JSONB and mapped whole. These are display data read with the product and
+     * never queried into, and their order is the operator's — a JSON array keeps that without
+     * a child table and a position column on every read. See V6__product_catalog_data.sql.
+     */
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "highlights", nullable = false, columnDefinition = "jsonb")
+    private List<ProductHighlight> highlights;
+
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "specs", nullable = false, columnDefinition = "jsonb")
+    private List<ProductSpec> specs;
 
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)
