@@ -35,6 +35,17 @@ public class OrderService {
     }
 
     /**
+     * Todos os pedidos da loja. Não recebe nem consulta o chamador de propósito: quem decide
+     * se pode ver isto é a camada HTTP, com {@code @PreAuthorize}. Um filtro por papel aqui
+     * dentro daria a impressão de que o método se protege sozinho, e a próxima rota que o
+     * chamasse herdaria uma proteção que não existe.
+     */
+    @Transactional(readOnly = true)
+    public Page<Order> allOrders(Pageable pageable) {
+        return orderRepository.findAll(pageable);
+    }
+
+    /**
      * @param asOwner when true the caller sees any order; otherwise only their own, and
      *                someone else's order is reported as missing rather than forbidden
      */

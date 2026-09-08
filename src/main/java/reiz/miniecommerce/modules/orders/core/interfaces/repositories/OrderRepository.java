@@ -23,6 +23,15 @@ public interface OrderRepository {
 
     Page<Order> findByUserId(UUID userId, Pageable pageable);
 
+    /**
+     * Todos os pedidos da loja, sem recorte por cliente.
+     *
+     * Existe só para o dono. É a única leitura de pedido que não passa por um id de usuário,
+     * e por isso quem a expõe carrega a obrigação de checar o papel — o repositório não sabe
+     * quem está perguntando.
+     */
+    Page<Order> findAll(Pageable pageable);
+
     List<Order> findByStatus(OrderStatus status);
 
     /** The order a payment belongs to, used when a gateway notification arrives. */

@@ -69,6 +69,25 @@ public class OrderController {
                 this::render);
     }
 
+    /**
+     * A loja inteira, para o dono. Mesmo formato de página da busca de produtos.
+     *
+     * <p>Rota própria em vez de um desvio por papel dentro de {@code GET /orders}: uma rota
+     * que devolve coisas diferentes conforme quem chama é a que engana em revisão, e o dono
+     * também é cliente — ele precisa continuar conseguindo ver os pedidos dele.
+     *
+     * <p>O caminho literal {@code /all} não colide com {@code /{id}}: o Spring casa o literal
+     * antes do template. Mas é por isso que ele não pode ser um UUID válido algum dia.
+     */
+    @GetMapping("/all")
+    @PreAuthorize("hasRole('OWNER')")
+    public PageResponse<OrderResponse> allOrders(@RequestParam(defaultValue = "0") int page,
+                                                 @RequestParam(defaultValue = "20") int size) {
+        return PageResponse.of(
+                orderService.allOrders(PageRequest.of(Math.max(page, 0), clampSize(size))),
+                this::render);
+    }
+
     @GetMapping("/{id}")
     public OrderResponse detail(@PathVariable UUID id) {
         return render(orderService.visibleOrder(id, currentUser.requireId(), callerIsOwner()));

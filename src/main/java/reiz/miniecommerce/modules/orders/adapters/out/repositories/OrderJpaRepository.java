@@ -17,6 +17,9 @@ public interface OrderJpaRepository extends JpaRepository<OrderJpaEntity, UUID> 
 
     Page<OrderJpaEntity> findByUserIdOrderByCreatedAtDesc(UUID userId, Pageable pageable);
 
+    /** A loja inteira, para o painel do dono. */
+    Page<OrderJpaEntity> findAllByOrderByCreatedAtDesc(Pageable pageable);
+
     List<OrderJpaEntity> findByStatus(OrderStatus status);
 
     Optional<OrderJpaEntity> findByPaymentId(UUID paymentId);

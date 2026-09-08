@@ -39,6 +39,16 @@ public class OrderRepositoryAdapter implements OrderRepository {
         return jpaRepository.findByUserIdOrderByCreatedAtDesc(userId, pageable).map(mapper::toDomain);
     }
 
+    /**
+     * Mesma ordenação de {@code findByUserId}: mais recentes primeiro. O dono abre esta lista
+     * para achar o que precisa de ação, e o que precisa de ação é sempre o que acabou de
+     * entrar — ordenar por qualquer outra coisa deixaria o trabalho do dia na última página.
+     */
+    @Override
+    public Page<Order> findAll(Pageable pageable) {
+        return jpaRepository.findAllByOrderByCreatedAtDesc(pageable).map(mapper::toDomain);
+    }
+
     @Override
     public List<Order> findByStatus(OrderStatus status) {
         return jpaRepository.findByStatus(status).stream().map(mapper::toDomain).toList();
