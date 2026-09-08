@@ -18,6 +18,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.Optional;
 import java.util.UUID;
@@ -33,15 +34,46 @@ public class PaymentService {
     private final OrderRepository orderRepository;
     private final OrderService orderService;
     private final UserRepository userRepository;
+    private final TransactionTemplate transactions;
 
     /**
      * Opens a charge for an order that is still awaiting payment.
      *
      * <p>The amount is the sum of the order's frozen line prices, computed here — never taken
      * from the caller.
+     *
+     * <p>Deliberately not annotated. The row is written and committed first, and only then is
+     * Mercado Pago called: the pool is five connections wide and the gateway is allowed ten
+     * seconds, so a call held between BEGIN and COMMIT would let a slow provider drain the
+     * pool and stall requests that have nothing to do with payment. The transaction is opened
+     * with a template instead of by delegating to another {@code @Transactional} method of
+     * this class, because that call would be made on {@code this}, bypass the proxy and run
+     * with no transaction at all — the guard below and the row that follows it would stop
+     * being one unit, which is the very thing they have to be.
+     *
+     * <p>The cost of committing first is that a gateway failure leaves a payments row with no
+     * charge behind it. That row is inert: nothing at Mercado Pago references it, so
+     * reconciliation can never find it and it can never settle. The extended reservation
+     * survives too, which errs in the customer's favour — the stock stays theirs while they
+     * retry, and the sweep still reclaims it at the longer deadline. Undoing either in a
+     * compensating write would buy nothing and could fail on its own.
      */
-    @Transactional
     public OpenedCharge openCharge(UUID orderId, UUID callerId, boolean asOwner) {
+        RegisteredCharge charge = transactions.execute(status -> registerCharge(orderId, callerId, asOwner));
+
+        PaymentIntent intent = paymentGateway.openCharge(
+                charge.payment().getId(), "Pedido " + orderId, charge.payment().getAmount(), charge.payerEmail());
+
+        return new OpenedCharge(charge.payment(), intent);
+    }
+
+    /**
+     * The database half of opening a charge: everything that has to be all-or-nothing.
+     *
+     * <p>An order that was paid while this ran must not also be charged here, so the check
+     * for PENDING and the row it authorizes commit together or not at all.
+     */
+    private RegisteredCharge registerCharge(UUID orderId, UUID callerId, boolean asOwner) {
         Order order = orderService.visibleOrder(orderId, callerId, asOwner);
 
         if (order.getStatus() != OrderStatus.PENDING) {
@@ -64,10 +96,11 @@ public class PaymentService {
                 .map(user -> user.getEmail())
                 .orElse(null);
 
-        PaymentIntent intent = paymentGateway.openCharge(
-                payment.getId(), "Pedido " + orderId, payment.getAmount(), email);
+        return new RegisteredCharge(payment, email);
+    }
 
-        return new OpenedCharge(payment, intent);
+    /** What the transaction hands to the gateway call: the row to charge and who to bill. */
+    private record RegisteredCharge(Payment payment, String payerEmail) {
     }
 
     @Transactional(readOnly = true)
