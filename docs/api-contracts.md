@@ -2,7 +2,7 @@
 
 Contrato das rotas: caminho feliz, autorização e os erros que cada uma produz.
 
-Estado atual: **implementado e coberto por testes**. 65 testes de integração rodam contra
+Estado atual: **implementado e coberto por testes**. 139 testes de integração rodam contra
 Postgres, Redis e MinIO reais. As divergências em relação ao plano original estão marcadas
 com **Mudou**.
 
@@ -117,6 +117,7 @@ Listas que podem crescer usam `?page=0&size=20`:
 | DELETE | `/cart` | USER |
 | POST | `/orders` | USER |
 | GET | `/orders` | USER |
+| GET | `/orders/all` | OWNER |
 | GET | `/orders/{id}` | dono ou OWNER |
 | PATCH | `/orders/{id}/status` | OWNER |
 | POST | `/orders/{id}/payments` | dono |
@@ -130,6 +131,8 @@ Listas que podem crescer usam `?page=0&size=20`:
 | POST | `/order-items/{orderItemId}/reviews` | dono |
 | PUT | `/reviews/{id}` | dono |
 | DELETE | `/reviews/{id}` | dono |
+| GET | `/owners/origin` | OWNER |
+| PUT | `/owners/origin` | OWNER |
 
 ---
 
@@ -236,7 +239,7 @@ Google e são sobrescritos no próximo login.
 }
 ```
 
-**201** + `Location: /users/me/addresses/{id}`
+**201** + `Location: /users/me/addresses/{id}`, **e o endereço criado no corpo** — é assim que o cliente lê o id sem precisar do header.
 
 | Status | Causa |
 |---|---|
@@ -275,6 +278,10 @@ Query: `?q=caneca&page=0&size=20`
 **200** — produto completo com array de fotos ordenado por `position`. Mesma forma da
 listagem.
 
+Além dos campos de sempre, devolve `category`, `highlights` e `specs` (ver `POST /products`).
+`highlights` e `specs` são **sempre arrays**, nunca `null`: produto sem ficha preenchida vem
+com lista vazia, então o front não precisa de guarda. `category` pode vir ausente.
+
 Esta é a rota que passa pelo cache Redis (`@Cacheable` em `ProductRepositoryAdapter.findById`),
 TTL de 10 minutos, invalidado em qualquer escrita.
 
@@ -285,7 +292,22 @@ TTL de 10 minutos, invalidado em qualquer escrita.
 ### `POST /products` — OWNER
 
 ```json
-{ "name": "Caneca", "description": "Cerâmica 300ml", "price": 49.90, "stock": 10 }
+{
+  "name": "Monitor 27\" QHD 144 Hz",
+  "description": "Painel IPS de 27 polegadas em 2560×1440.",
+  "price": 2449.00,
+  "stock": 12,
+  "category": "Monitores",
+  "highlights": [
+    { "value": "144", "unit": "Hz" },
+    { "value": "27\"", "unit": "QHD" },
+    { "value": "1 ms", "unit": "resposta" }
+  ],
+  "specs": [
+    { "label": "Tela", "value": "27\" IPS · 2560×1440" },
+    { "label": "Taxa de atualização", "value": "144 Hz" }
+  ]
+}
 ```
 
 **201** + `Location`
@@ -293,7 +315,28 @@ TTL de 10 minutos, invalidado em qualquer escrita.
 | Status | Causa |
 |---|---|
 | 400 | `price` negativo, `stock` negativo, `name` vazio |
+| 400 | mais de 3 `highlights`, mais de 30 `specs`, `value` ou `label` vazio |
 | 403 | token de `USER` |
+
+> **Mudou.** A migration `V6` acrescentou `category`, `highlights` e `specs` ao produto. Antes
+> só existia `description` em texto corrido, que não dá para filtrar, não dá para alinhar ao
+> lado de outro produto e não vira tabela.
+
+`category` é texto livre, não enum: há uma loja e uma pessoa preenchendo, e uma lista fixa
+custaria uma migration a cada categoria nova. A barra de filtros do catálogo se monta a partir
+das categorias em uso — categoria vazia tira o produto da barra, nunca da listagem.
+
+`highlights` são os números grandes do card, com valor e unidade **separados** porque são
+tipografados em tamanhos diferentes; juntá-los faria o front adivinhar onde o número termina,
+e ele erra em `2 TB` e `1 ms GtG`. O limite de três é o que cabe no card — um quarto não seria
+mostrado, e descartar em silêncio é pior que recusar.
+
+`specs` é a ficha técnica, na ordem em que o operador digitou. É dessa ordem que a comparação
+lado a lado alinha os produtos.
+
+**As duas listas são substituídas por inteiro no `PUT`, nunca mescladas.** Um `PUT` que as
+omite **limpa** as duas — o operador edita a ficha como ficha, e mesclar deixaria uma linha
+digitada por engano sem forma de ser apagada.
 
 ### `PUT /products/{id}` — OWNER
 ### `DELETE /products/{id}` — OWNER
@@ -426,9 +469,22 @@ Checkout. Converte o carrinho do Redis em pedido no Postgres.
 { "addressId": "0193..." }
 ```
 
-Em uma transação: lê o carrinho, revalida estoque e preço de cada linha, cria `orders`
-(status `PENDING`), cria os `order_items` congelando `unit_price` e decrementa
-`products.stock`.
+Antes de qualquer coisa vêm as recusas baratas — perfil incompleto, endereço de outro
+usuário. Elas são de propósito o primeiro passo: um checkout condenado não deve custar uma
+consulta de CEP, e um endereço que não é de quem chamou não deve ser resolvido em coordenadas
+em nome dele.
+
+Depois delas, e ainda **fora** da transação, o frete é cotado: a distância entre o CEP de
+origem da loja e o do endereço escolhido, resolvida por um serviço público de CEP. Cotar de
+dentro da transação seguraria uma das cinco conexões do pool durante uma chamada HTTP a
+terceiro, e um provedor lento travaria quem está apenas navegando o catálogo. Se o lookup
+falhar, vale a tarifa fixa de contingência e a distância não é gravada. Se a loja não tiver
+origem configurada, o checkout **recusa** com 409 — todo pedido tem frete, e entregar de graça
+por falta de configuração é o erro que só aparece na contabilidade.
+
+Só então, em uma transação: lê o carrinho, revalida estoque e preço de cada linha, cria
+`orders` (status `PENDING`, com a cotação já congelada em `shipping_cost`), cria os
+`order_items` congelando `unit_price` e decrementa `products.stock`.
 
 O carrinho é apagado **depois** do commit, não dentro da transação: o Redis não faz rollback
 junto com o Postgres, e apagar antes faria um checkout falho custar o carrinho ao cliente.
@@ -441,7 +497,13 @@ sozinho — veja *Reserva de estoque* abaixo.
 > O endereço escolhido no checkout não tinha onde ficar: ele só existia em `shipments`, que
 > o dono cria depois do pagamento.
 
-**201** + `Location: /orders/{id}`
+> **Mudou.** `orders` ganhou `shipping_cost` e `shipping_distance_km` (migration `V5`), e a
+> resposta de pedido ganhou `itemsTotal`, `shippingCost` e `shippingDistanceKm`. Junto veio
+> uma mudança de significado: **`total` deixou de ser a soma dos itens e passou a ser
+> mercadoria mais frete** — exatamente o valor que o gateway de pagamento cobra. Cliente que
+> lia `total` como valor de mercadoria precisa passar a ler `itemsTotal`.
+
+**201** + `Location: /orders/{id}`, **e o pedido criado no corpo**, já com `total`, `shippingCost`, `shippingDistanceKm` e `expiresAt` — o front precisa dos quatro na mesma resposta para mostrar o resumo e a reserva sem uma segunda chamada.
 
 | Status | Causa |
 |---|---|
@@ -451,6 +513,7 @@ sozinho — veja *Reserva de estoque* abaixo.
 | 409 | `EMPTY_CART` — carrinho vazio ou expirado |
 | 409 | `INSUFFICIENT_STOCK` — estoque acabou entre adicionar ao carrinho e o checkout |
 | 409 | `PRICE_CHANGED` — preço do produto mudou desde que entrou no carrinho |
+| 409 | `SHIPPING_ORIGIN_NOT_CONFIGURED` — a loja não definiu a origem do frete e por isso não vende |
 
 `PRICE_CHANGED` **recusa** o checkout em vez de cobrar o preço novo calado. Um carrinho pode
 ficar parado dias, e ninguém deve ser cobrado por um valor que não aceitou. Custa uma tela a
@@ -458,12 +521,65 @@ mais no front.
 
 ### `GET /orders` — USER
 
-Página de pedidos do usuário, mais recentes primeiro. Cada item traz resumo: id, status,
-total, quantidade de itens, data.
+Página de pedidos do usuário, mais recentes primeiro. Cada elemento tem a mesma forma do
+`GET /orders/{id}`, itens inclusive — não é um resumo reduzido.
+
+**Recorta por quem chama, sempre — inclusive para o dono.** Um token de `OWNER` aqui devolve
+os pedidos que o dono fez *como cliente*, porque o `sub` dele é o id dele. Para a loja
+inteira, use `GET /orders/all`.
+
+### `GET /orders/all` — OWNER
+
+Todos os pedidos da loja, mais recentes primeiro, no mesmo formato de página da busca de
+produtos: `?page=0&size=20`, `size` limitado a 100.
+
+| Status | Causa |
+|---|---|
+| 401 | sem token |
+| 403 | token de `USER` — a rota é de operação da loja |
+
+**Rota separada em vez de um desvio por papel dentro de `GET /orders`.** Uma rota que devolve
+conjuntos diferentes conforme quem chama é a que passa despercebida em revisão, e o dono
+também compra: ele precisa continuar tendo a lista dos pedidos dele.
+
+**A autorização vive no `@PreAuthorize` do controller, e `OrderService.allOrders` não filtra
+por papel.** É deliberado: um filtro dentro do service daria a impressão de que o método se
+protege sozinho, e a próxima rota que o chamasse herdaria uma proteção que não existe.
+
+O caminho literal `/all` não colide com `/{id}` porque o Spring casa literal antes de
+template. O preço é que `all` nunca poderá ser um id válido.
 
 ### `GET /orders/{id}` — dono ou OWNER
 
 **200** — pedido completo com itens, endereço, pagamento e envio embutidos.
+
+```json
+{
+  "id": "0193...",
+  "status": "PENDING",
+  "total": 122.30,
+  "itemsTotal": 99.80,
+  "shippingCost": 22.50,
+  "shippingDistanceKm": 17.31,
+  "itemCount": 2,
+  "addressId": "0193...",
+  "paymentId": null,
+  "shipmentId": null,
+  "items": [],
+  "createdAt": "2026-08-30T14:22:31-03:00",
+  "expiresAt": "2026-08-30T14:52:31-03:00"
+}
+```
+
+`itemsTotal` é a mercadoria, `shippingCost` é a entrega e `total` é a soma dos dois — o mesmo
+número que o gateway cobra em `POST /orders/{id}/payments`. Os três saem de valores congelados
+no checkout, então releem iguais para sempre. O front mostra as duas linhas sem somar nem
+subtrair nada por conta própria, que é justamente para isso que `itemsTotal` existe.
+
+`shippingDistanceKm` **nulo significa frete não medido**, e há um único caso: o lookup de CEP
+falhou e valeu a tarifa fixa de contingência. Não existe pedido com frete zero — sem origem
+configurada o checkout é recusado, não barateado. A distância gravada é a linha reta entre os
+dois CEPs; o fator rodoviário entra no preço, não nela.
 
 | Status | Causa |
 |---|---|
@@ -539,12 +655,14 @@ Cria a preferência no Mercado Pago e devolve a URL de checkout.
 **201**
 
 ```json
-{ "checkoutUrl": "https://mercadopago.com/...", "gatewayReference": "1234-abcd", "amount": 99.80 }
+{ "checkoutUrl": "https://mercadopago.com/...", "gatewayReference": "1234-abcd", "amount": 122.30 }
 ```
 
-O valor é a soma dos preços congelados do pedido, calculada no servidor — nunca recebida do
-cliente. Nosso id de pagamento viaja como `external_reference` na preferência, e é assim que
-a notificação, que só traz o id do Mercado Pago, volta a encontrar a linha em `payments`.
+O valor é a soma dos preços congelados do pedido **mais o frete congelado**, calculada no
+servidor — nunca recebida do cliente. É o mesmo `total` que a resposta do pedido mostra: um
+pedido que exibe entrega na tela e abre cobrança sem ela viajaria de graça. Nosso id de
+pagamento viaja como `external_reference` na preferência, e é assim que a notificação, que só
+traz o id do Mercado Pago, volta a encontrar a linha em `payments`.
 
 | Status | Causa |
 |---|---|
@@ -643,6 +761,66 @@ notificação de "avalie sua compra".
 
 ---
 
+## 11b. Owner — a origem do frete
+
+Configuração da loja, não dado de cliente: `/owners/**` inteiro exige `role=OWNER` na
+`SecurityConfig`, e um `USER` autenticado leva **403**, não 404. Aqui o 403 é o certo pelo
+mesmo critério da seção 3 — não há id para enumerar, e a existência da loja já é pública em
+cada produto do catálogo.
+
+O frete é cobrado por distância, do CEP de origem da loja até o CEP do endereço de entrega.
+A origem fica na linha do dono, e não em variável de ambiente, porque quem muda o endereço da
+loja é o operador: em configuração, mudar de galpão seria um redeploy.
+
+### `GET /owners/origin` — OWNER
+
+**200**
+
+```json
+{ "zipCode": "01310100" }
+```
+
+`zipCode` é `null` enquanto a loja nunca configurou origem, que é como ela nasce — a migration
+que semeia o dono tem o e-mail dele e mais nada, e não havia CEP a inventar. **Enquanto for
+nulo a loja não vende**: `POST /orders` responde 409 `SHIPPING_ORIGIN_NOT_CONFIGURED`. Definir
+a origem é passo obrigatório de instalação, como preencher `MP_ACCESS_TOKEN`.
+
+| Status | Causa |
+|---|---|
+| 401 | sem token |
+| 403 | token de `USER` — a rota é de operação da loja |
+| 500 | `INTERNAL_ERROR` — não existe linha em `owners`. É deploy quebrado (a seed da `V2` não rodou), não erro de quem chamou, e por isso não vira 404 |
+
+### `PUT /owners/origin` — OWNER
+
+```json
+{ "zipCode": "01310-100" }
+```
+
+O CEP é validado contra `[0-9]{5}-?[0-9]{3}`: aceito com ou sem hífen, porque é assim que se
+digita, e gravado normalizado em 8 dígitos, que é a largura da coluna e o formato que o
+gateway de CEP espera.
+
+**200** — a origem já gravada, na mesma forma do `GET`.
+
+| Status | Causa |
+|---|---|
+| 400 | `VALIDATION_ERROR` — `zipCode` ausente, vazio ou fora do padrão de 8 dígitos |
+| 401 | sem token |
+| 403 | token de `USER` |
+| 500 | `INTERNAL_ERROR` — não existe linha em `owners` |
+
+**Mudar a origem reprecifica apenas pedidos futuros.** A cotação de um pedido já feito está
+congelada em `orders.shipping_cost` e nunca é recalculada — o cliente concordou com aquele
+valor, e recalcular na leitura faria o valor devido andar sozinho depois do aceite. Mudar a
+loja de cidade muda o frete do próximo checkout, não o de uma cobrança já aberta.
+
+`zipCode` é obrigatório e não existe rota que devolva a origem a `null`. Isso é intencional:
+não há modo "sem frete" para desligar. Uma vez configurada, a loja pode mudar de endereço,
+nunca deixar de cobrar entrega.
+
+---
+
 ## 12. Decisões, e como ficaram
 
 | # | Assunto | Decisão |
@@ -669,12 +847,16 @@ a loja; e uma linha que já tem `google_sub` nunca é reapontada.
 | `V1__init` | 10 tabelas, FKs, índices, índices únicos parciais |
 | `V2__owner_seed_product_active_order_status` | `products.active`, `owners.google_sub` nullable, owner semeado, check de status |
 | `V3__order_address` | `orders.address_id` |
+| `V4__order_expiration` | `orders.expires_at` + índice parcial da varredura de reserva |
+| `V5__shipping` | `owners.origin_zip_code`, `orders.shipping_cost` e `orders.shipping_distance_km` |
+| `V6__product_catalog_data` | `products.category` + `highlights` e `specs` em JSONB, com `CHECK` de array |
 
 ---
 
 ## 13. O que falta
 
-Os 7 passos da implementação estão feitos. O que fica pendente é operacional, não de código:
+Os 7 passos da implementação estão feitos, e o frete veio depois deles. O que fica pendente
+é sobretudo operacional:
 
 - **`MP_ACCESS_TOKEN`, `MP_WEBHOOK_SECRET` e `MP_NOTIFICATION_URL`** estão vazios. A URL de
   notificação precisa ser publicamente alcançável — em desenvolvimento, um túnel apontando
@@ -684,7 +866,16 @@ Os 7 passos da implementação estão feitos. O que fica pendente é operacional
 - **`JWT_SECRET`** ainda é o placeholder do `application.properties`. Em produção, valor
   aleatório de 32+ bytes: quem tiver esse segredo emite token de qualquer usuário, inclusive
   `OWNER`.
-- **Validação de CPF é só de formato** (`\d{11}`). Aceita `00000000000`. Dígito verificador
-  exige um validador próprio.
+- **A origem do frete nasce vazia, e é passo obrigatório de instalação.** Nenhuma variável
+  `SHIPPING_*` precisa ser preenchida — todas têm default —, mas enquanto ninguém chamar
+  `PUT /owners/origin` a loja não fecha pedido nenhum: o checkout responde 409
+  `SHIPPING_ORIGIN_NOT_CONFIGURED`. Uma vez definida, não há rota que a apague, porque não
+  existe modo "sem frete" para voltar.
+- **A tarifa de contingência é uma só para o país inteiro.** Quando o lookup de CEP falha,
+  quem está a três quilômetros paga o mesmo que quem está a oitocentos. É deliberado, já que a
+  alternativa é recusar a venda — e as linhas com `shipping_distance_km` nulo são a medida de
+  quanto isso está custando.
+- **Não há rota de perfil do dono.** O `OwnerController` expõe apenas `/owners/origin`;
+  `GET /owners/me` continua não existindo.
 - **Sem revogação de token.** TTL de 1h e vale até expirar. Para logout imediato ou
   banimento, o caminho é uma denylist de `jti` no Redis.

@@ -4,8 +4,8 @@ Loja online de dono único: catálogo, carrinho, checkout, pagamento pelo Mercad
 e avaliação. Spring Boot 4 sobre Postgres, Redis e um bucket S3, em arquitetura hexagonal
 com um módulo por agregado.
 
-**120 testes de integração** rodando contra Postgres, Redis e MinIO reais — sem mock de
-infraestrutura.
+**139 testes de integração** rodando contra Postgres, Redis e MinIO reais — sem mock de
+infraestrutura, mais 13 unitários que não precisam de nada de pé.
 
 ---
 
@@ -19,10 +19,8 @@ infraestrutura.
 | Imagens | S3 — MinIO em desenvolvimento |
 | Pagamento | Mercado Pago Checkout Pro |
 | Autenticação | Google Sign-In → JWT próprio (HS256) |
+| Frete | BrasilAPI (CEP → coordenadas) |
 | Documentação | OpenAPI 3 / Swagger UI |
-
-Kafka está no `pom.xml` e no compose, ainda **sem uso em código** — reservado para uma
-implementação futura.
 
 ---
 
@@ -30,7 +28,7 @@ implementação futura.
 
 ```bash
 cp .env.example .env          # preencha o que estiver vazio
-docker compose up -d          # Postgres, Redis, Kafka, MinIO
+docker compose up -d          # Postgres, Redis, MinIO
 
 set -a && . ./.env && set +a  # o compose lê o .env sozinho; a aplicação não
 ./mvnw spring-boot:run
@@ -169,6 +167,42 @@ O carrinho vive no Redis com TTL de sete dias. Ele é apagado **depois** do comm
 checkout — o Redis não faz rollback junto com o Postgres, e apagar antes faria um checkout
 falho custar o carrinho ao cliente.
 
+### Frete medido por distância, congelado no pedido
+
+O frete é a distância entre o CEP de origem da loja e o CEP do endereço de entrega, corrigida
+por um fator rodoviário — a linha reta entre duas coordenadas fica cerca de um terço abaixo do
+trajeto real — e multiplicada por um preço por quilômetro.
+
+**A origem vive em `owners.origin_zip_code`, não em configuração.** Quem muda o endereço da
+loja é o operador, por `PUT /owners/origin`, e uma variável de ambiente transformaria uma
+decisão de negócio em redeploy. A coluna nasce nula, porque a migration que semeia o dono tem
+o e-mail dele e mais nada — e nulo significa **origem ainda não configurada**.
+
+**Sem origem, o checkout recusa.** Todo pedido tem frete, então uma loja que não sabe medir a
+distância não vende: `POST /orders` responde 409 `SHIPPING_ORIGIN_NOT_CONFIGURED` até o
+operador definir o CEP. A alternativa — entregar de graça enquanto ninguém configurou — é o
+erro que ninguém percebe, porque cada pedido isolado parece perfeitamente normal e a conta só
+aparece na contabilidade. Falha fechada, no mesmo espírito dos segredos que esta API exige.
+
+**A cotação é congelada em `orders.shipping_cost`**, pelo mesmo motivo que
+`order_items.unit_price` é congelado: ela vem de uma consulta a terceiro que pode responder
+diferente amanhã, ou não responder. Recalcular na leitura faria o valor devido mudar depois
+que o cliente concordou com ele. `Order.totalWith` soma mercadoria e frete em um único lugar,
+por onde passam tanto a resposta da API quanto o valor mandado ao gateway — um pedido que
+mostra entrega na tela e cobra sem ela viajaria de graça até a contabilidade perceber.
+
+**`orders.shipping_distance_km` é nullable, e o nulo carrega significado.** Linha com custo e
+sem distância foi cobrada pela tarifa fixa de contingência, aplicada quando o lookup de CEP
+falhou. É essa distinção que permite explicar uma cobrança a quem contesta, e contar com que
+frequência o fallback dispara, sem gastar uma coluna booleana. As coordenadas de um CEP ficam
+em cache no Redis por 30 dias — um CEP não muda de lugar, e o cache é o que impede que uma
+instabilidade do provedor seja sentida na maioria dos pedidos.
+
+**A cotação acontece fora da transação do checkout.** O `CheckoutService` cota primeiro e só
+então chama o `OrderPlacementService`, que é quem abre a transação. O pool tem cinco conexões:
+segurar uma entre o `BEGIN` e o `COMMIT` esperando um serviço público de CEP deixaria um
+provedor lento travar quem está apenas navegando o catálogo.
+
 ### Owner reivindicado por e-mail
 
 O dono é semeado por migration com e-mail e sem `google_sub`, que só existe depois do
@@ -209,6 +243,8 @@ token. Por isso as rotas são `/users/me/...`.
 | `V2__owner_seed_product_active_order_status` | `products.active`, `owners.google_sub` nullable, owner semeado, check de status |
 | `V3__order_address` | `orders.address_id` |
 | `V4__order_expiration` | `orders.expires_at` + índice parcial da varredura |
+| `V5__shipping` | `owners.origin_zip_code`, `orders.shipping_cost` e `orders.shipping_distance_km` |
+| `V6__product_catalog_data` | `products.category`, `products.highlights` e `products.specs` (JSONB) |
 
 Três índices únicos parciais carregam regra de negócio que o código não precisa repetir:
 
@@ -252,7 +288,7 @@ um cancelado à mão, e o que faz a coluna virar histórico de venda perdida: ju
 ./mvnw test -Dtest=CheckoutTest
 ```
 
-120 testes contra infraestrutura real. Sem mock de repositório: os bugs que apareceram nesta
+139 testes contra infraestrutura real. Sem mock de repositório: os bugs que apareceram nesta
 base — `@Cacheable` estourando com `Optional.empty()`, carrinho sobrevivendo a rollback,
 índice único de capa, venda dupla sob concorrência — nenhum apareceria com repositório
 mockado.
@@ -270,7 +306,7 @@ O contrato completo — payloads, autorização e os erros que cada rota produz 
 
 Com a aplicação de pé, o Swagger UI é a referência viva: `http://localhost:8080/swagger-ui.html`
 
-36 operações em 23 caminhos. Erros em `application/problem+json` (RFC 9457), com `code`
+39 operações em 25 caminhos. Erros em `application/problem+json` (RFC 9457), com `code`
 estável onde o cliente precisa reagir a um caso específico.
 
 ---
@@ -279,10 +315,11 @@ estável onde o cliente precisa reagir a um caso específico.
 
 - **Login real com Google** nunca foi exercitado de ponta a ponta — precisa do front
   chamando o Identity Services. A validação do JWT próprio está coberta.
-- **`GET /owners/me`** não existe; `owners` é o único módulo sem controller.
+- **`GET /owners/me`** não existe. O `OwnerController` cobre só a origem do frete
+  (`/owners/origin`): não há rota que devolva o perfil do dono, nem como zerar a origem
+  depois de definida — o corpo do `PUT` exige um CEP.
 - **Sem revogação de token** — o TTL de 1h é o único limite. Logout imediato pediria uma
   denylist de `jti` no Redis.
 - **`email_verified` não é exigido** para cliente comum; só o caminho de owner verifica.
 - **Rate limiting por conta** não existe. Hoje as constraints do banco cobrem os abusos que
   importam; passa a fazer sentido se entrar endpoint caro por chamada ou vários vendedores.
-- **Kafka** ligado na infraestrutura, sem código.
