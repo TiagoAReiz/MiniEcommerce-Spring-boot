@@ -1,5 +1,11 @@
 # MiniEcommerce
 
+[![CI](https://github.com/TiagoAReiz/MiniEcommerce-Spring-boot/actions/workflows/ci.yml/badge.svg)](https://github.com/TiagoAReiz/MiniEcommerce-Spring-boot/actions/workflows/ci.yml)
+![Java 17](https://img.shields.io/badge/Java-17-007396?logo=openjdk&logoColor=white)
+![Spring Boot 4](https://img.shields.io/badge/Spring%20Boot-4.1-6DB33F?logo=springboot&logoColor=white)
+![PostgreSQL 17](https://img.shields.io/badge/PostgreSQL-17-4169E1?logo=postgresql&logoColor=white)
+![Redis 7](https://img.shields.io/badge/Redis-7-DC382D?logo=redis&logoColor=white)
+
 Loja online de dono único: catálogo, carrinho, checkout, pagamento pelo Mercado Pago, envio
 e avaliação. Spring Boot 4 sobre Postgres, Redis e um bucket S3, em arquitetura hexagonal
 com um módulo por agregado.
@@ -28,7 +34,7 @@ infraestrutura, mais 13 unitários que não precisam de nada de pé.
 
 ```bash
 cp .env.example .env          # preencha o que estiver vazio
-docker compose up -d          # Postgres, Redis, MinIO
+docker compose up -d db redis minio   # só a infraestrutura; sem nomes, sobe o app também
 
 set -a && . ./.env && set +a  # o compose lê o .env sozinho; a aplicação não
 ./mvnw spring-boot:run
@@ -39,6 +45,21 @@ set -a && . ./.env && set +a  # o compose lê o .env sozinho; a aplicação não
 - Console do MinIO: `http://localhost:9001`
 
 O bucket de imagens é criado no primeiro boot, e o Flyway aplica as migrations sozinho.
+
+### Front-end (Next.js)
+
+A loja e o painel do dono ficam em [`frontend/`](frontend/):
+
+```bash
+cd frontend
+npm ci
+NEXT_PUBLIC_API_BASE=http://localhost:8080 \
+NEXT_PUBLIC_GOOGLE_CLIENT_ID=<o mesmo GOOGLE_CLIENT_ID da API> \
+npm run dev                   # http://localhost:3000
+```
+
+`NEXT_PUBLIC_API_BASE` já tem `http://localhost:8080` como default; `localhost:3000` já está
+em `CORS_ALLOWED_ORIGINS`.
 
 ### Em container
 
@@ -94,6 +115,61 @@ modules/<módulo>/
 
 Módulos: `address` `auth` `cart` `orders` `owners` `payments` `products` `reviews`
 `shipments` `users`.
+
+```mermaid
+flowchart LR
+    subgraph IN["adapters/in"]
+        HTTP["Controllers REST<br/>+ DTOs"]
+        WH["Webhook<br/>Mercado Pago"]
+        JOB["Jobs agendados<br/>expiração · reconciliação"]
+    end
+
+    subgraph APP["application/services"]
+        UC["Casos de uso"]
+    end
+
+    subgraph CORE["core"]
+        DOM["Entidades de domínio"]
+        PORTS["Portas<br/>interfaces/repositories"]
+    end
+
+    subgraph OUT["adapters/out"]
+        JPA["Spring Data JPA"]
+        RED["Redis<br/>carrinho · idempotência"]
+        S3A["S3 client"]
+        MPA["Gateway Mercado Pago"]
+        CEP["BrasilAPI (CEP)"]
+        GOO["Google JWKS"]
+    end
+
+    HTTP --> UC
+    WH --> UC
+    JOB --> UC
+    UC --> DOM
+    UC --> PORTS
+    JPA -. implementa .-> PORTS
+    RED -. implementa .-> PORTS
+    S3A -. implementa .-> PORTS
+    MPA -. implementa .-> PORTS
+    CEP -. implementa .-> PORTS
+    GOO -. implementa .-> PORTS
+
+    JPA --> PG[("PostgreSQL")]
+    RED --> RDS[("Redis")]
+    S3A --> MIN[("S3 / MinIO")]
+```
+
+Dependências entre módulos na camada de aplicação (`auth` omitido — quase todos usam o
+usuário corrente):
+
+```mermaid
+flowchart LR
+    cart --> products
+    orders --> cart & products & address & shipments & users
+    payments --> orders & users
+    shipments --> orders & address & owners
+    reviews --> orders
+```
 
 **Agregados se referenciam por id, não por objeto.** `Order` tem `userId`, não `User`. O
 `orders/core` não importa nada de `users/core` — o preço é uma consulta a mais, o ganho é
@@ -287,6 +363,10 @@ um cancelado à mão, e o que faz a coluna virar histórico de venda perdida: ju
 ./mvnw test                          # precisa dos containers de pé
 ./mvnw test -Dtest=CheckoutTest
 ```
+
+No CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) é o mesmo caminho: sobe
+`db`, `redis` e `minio` pelo próprio `docker-compose.yaml`, espera os healthchecks e roda
+`./mvnw verify` — nada de banco em memória nem infraestrutura simulada.
 
 139 testes contra infraestrutura real. Sem mock de repositório: os bugs que apareceram nesta
 base — `@Cacheable` estourando com `Optional.empty()`, carrinho sobrevivendo a rollback,
