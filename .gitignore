@@ -36,3 +36,15 @@ build/
 .env
 .env.local
 !.env.example
+
+### SO / logs ###
+.DS_Store
+Thumbs.db
+*.log
+
+### Front-end ###
+node_modules/
+
+### Chaves ###
+*.pem
+*.key
